@@ -1,0 +1,40 @@
+name: Android preview
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v3
+      - name: Android build tools
+        run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0' 'ndk;27.2.12479018'
+      - name: Rust targets
+        run: rustup target add aarch64-linux-android x86_64-linux-android
+      - name: Engine checks and host JNI
+        run: |
+          cargo test --workspace --locked
+          cargo build --release --features host-jni --locked
+      - name: APK
+        env:
+          ANDROID_NDK_HOME: /usr/local/lib/android/sdk/ndk/27.2.12479018
+        run: bash scripts/build-android.sh
+      - name: Android checks
+        run: ./android/gradlew -p android testDebugUnitTest lintDebug --no-daemon
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: inkstone-preview
+          path: |
+            releases/*.apk
+            artifacts/*.png
+            android/app/build/reports/
+            android/app/build/test-results/

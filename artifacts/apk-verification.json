@@ -1,0 +1,52 @@
+{
+  "apk": "inkstone-0.1.4-debug.apk",
+  "sha256": "fbb9b2b3554e0973d03a2f72cc2a8044efa53cd953a389b4d7ead86316c2b6a3",
+  "bytes": 2193332,
+  "abis": {
+    "arm64-v8a": {
+      "bytes": 565920,
+      "jni_methods": 11,
+      "load_segments": [
+        {
+          "offset": 0,
+          "alignment": 16384
+        },
+        {
+          "offset": 154972,
+          "alignment": 16384
+        },
+        {
+          "offset": 547344,
+          "alignment": 16384
+        },
+        {
+          "offset": 560760,
+          "alignment": 16384
+        }
+      ]
+    },
+    "x86_64": {
+      "bytes": 634400,
+      "jni_methods": 11,
+      "load_segments": [
+        {
+          "offset": 0,
+          "alignment": 16384
+        },
+        {
+          "offset": 160704,
+          "alignment": 16384
+        },
+        {
+          "offset": 613168,
+          "alignment": 16384
+        },
+        {
+          "offset": 629216,
+          "alignment": 16384
+        }
+      ]
+    }
+  },
+  "static_checks_passed": true
+}

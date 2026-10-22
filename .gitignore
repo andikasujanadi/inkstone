@@ -1,0 +1,16 @@
+.toolchain/
+target/
+android/.gradle/
+android/local.properties
+android/**/build/
+android/app/src/main/jniLibs/
+*.keystore
+*.jks
+.DS_Store
+artifacts/*.log
+releases/
+
+__pycache__/
+*.pyc
+
+android/.kotlin/

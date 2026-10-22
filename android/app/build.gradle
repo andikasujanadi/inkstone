@@ -1,0 +1,50 @@
+apply plugin: 'com.android.application'
+apply plugin: 'org.jetbrains.kotlin.android'
+
+android {
+    namespace 'art.inkstone'
+    compileSdk 36
+    defaultConfig {
+        applicationId 'art.inkstone'
+        minSdk 26
+        targetSdk 36
+        versionCode 5
+        versionName '0.1.4'
+        ndk { abiFilters 'arm64-v8a', 'x86_64' }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    kotlinOptions { jvmTarget = '17' }
+    buildTypes {
+        debug { applicationIdSuffix '.preview' }
+        release { minifyEnabled false }
+    }
+    packaging { jniLibs { useLegacyPackaging = false } }
+    testOptions {
+        unitTests.includeAndroidResources = true
+        unitTests.all {
+            systemProperty 'java.library.path', file('../../target/release').absolutePath
+            systemProperty 'robolectric.dependency.repo.url', 'https://repo.maven.apache.org/maven2'
+            systemProperty 'inkstone.artifacts', file('../../artifacts').absolutePath
+            if (System.getenv('INKSTONE_TEST_SDK_DIR')) {
+                systemProperty 'robolectric.dependency.dir', System.getenv('INKSTONE_TEST_SDK_DIR')
+                systemProperty 'robolectric.offline', 'true'
+            }
+            maxHeapSize = '3g'
+        }
+    }
+}
+
+dependencies {
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation('org.robolectric:robolectric:4.17') {
+        if (System.getenv('INKSTONE_TEST_RUNTIME')) {
+            exclude group: 'org.robolectric', module: 'nativeruntime-dist-compat'
+        }
+    }
+    if (System.getenv('INKSTONE_TEST_RUNTIME')) {
+        testRuntimeOnly files(System.getenv('INKSTONE_TEST_RUNTIME'))
+    }
+}
