@@ -1,6 +1,8 @@
-# Inkstone
+# Inkstone — Procreate-style painting for Android
 
-A native Android painting app with a Rust drawing engine. The interface follows Procreate's familiar canvas-first arrangement: editing tools at the upper left, painting tools at the upper right, brush controls along the side, and floating tool panels.
+Inkstone aims to bring the Procreate drawing experience to Android, starting with tablets and pressure-sensitive pens. It combines a native Android interface with a Rust drawing engine.
+
+**Early development:** this is a work in progress. Features are incomplete, bugs are expected, and many improvements and updates are still ahead. Feedback from real devices helps guide each release.
 
 **Status: early functional preview. This is not a complete or pixel-verified 1:1 reproduction of Procreate.** The first hardware target is Xiaomi Pad 7 with its original pen. The user reported serious stroke lag and interruptions on Xiaomi Pad 7 in 0.1.1. Version 0.1.4 includes the save/render fixes from 0.1.2 and needs hardware retesting.
 
