@@ -24,13 +24,13 @@ Reference: [Procreate interface handbook](https://help.procreate.com/procreate/h
 | 3D painting | Not implemented | Mesh loading, UV painting, lighting, texture export |
 | Time-lapse | Not implemented | Stroke recording, replay, video encoding/export |
 | Accessibility | Native labels/focus, basic keyboard bindings, pen/finger toggle | Full TalkBack pass, large-text reflow, switch access, color-independent selection cues |
-| Performance | Dirty-rectangle compositing, batched input, independent storage worker; Android bitmap presentation | wgpu/tiled renderer, input prediction, front-buffer path, hardware benchmarks |
+| Performance | wgpu compute brush/eraser/smudge and live layer compositing; bounded layer cache, CPU fallback, dirty-rectangle readback, batched input, independent storage worker | Tiled renderer, direct GPU presentation, input prediction, Android hardware benchmarks |
 
 Work toward parity in this order:
 
 1. Install on Pad 7, measure pressure/tilt/button delivery and stroke latency, fix any data-loss or input issues.
 2. Compare actual iPad screen recordings and screenshots for the editor, gallery, brushes, colors, layers, and Actions panel; reproduce each interaction state.
-3. Build the tiled GPU renderer and improve brush dynamics, smudge, and ColorDrop.
+3. Measure the Vulkan compute path on Android, extend it to a tiled renderer, and improve brush dynamics, smudge, and ColorDrop.
 4. Extend transforms, masks, adjustments, import/export, and guides.
 5. Add larger feature families such as text, time-lapse, animation, and 3D painting.
 

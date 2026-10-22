@@ -41,6 +41,7 @@ pub extern "system" fn Java_art_inkstone_NativeBridge_stroke(env:JNIEnv,_this:JO
         let sample=Sample{x:p[0],y:p[1],pressure:p[2],tilt:p[3]};
         if phase==0 && i==0 {e.begin(sample,brush);} else {e.sample(sample);}
     }
+    e.flush_gpu();
     if phase==2 {e.end();}
 }
 #[no_mangle]
@@ -63,7 +64,9 @@ pub extern "system" fn Java_art_inkstone_NativeBridge_load(env:JNIEnv,_this:JObj
     if env.get_array_length(&bytes).unwrap_or(i32::MAX)>128*1024*1024 {return output(&env,error("Document is too large"));}
     let result=match env.convert_byte_array(&bytes) {
         Ok(bytes)=>match Engine::load(&bytes) {
-            Ok(e)=>{let info=e.info();let mut guard=engines().lock().unwrap();if let Some(slot)=guard.get_mut(&id){*slot=e;info}else{error("Engine is closed")}},
+            Ok(mut e)=>{let mut guard=engines().lock().unwrap();if let Some(slot)=guard.get_mut(&id){
+                e.set_renderer(&slot.renderer_requested.clone()).ok();let info=e.info();*slot=e;info
+            }else{error("Engine is closed")}},
             Err(e)=>error(e)
         },Err(_)=>error("Could not read document")
     };output(&env,result)

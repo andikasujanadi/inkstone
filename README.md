@@ -22,6 +22,16 @@ Download the APK from [GitHub Releases](https://github.com/bramastahartono20/ink
 
 Debug builds use package ID `art.inkstone.preview`. Production builds use `art.inkstone`. Debug signing is for testing: configure a stable signing key before publishing release updates.
 
+## GPU update 0.1.6
+
+The Android drawing worker now initializes a Rust `wgpu` compute renderer using Vulkan. Brush and eraser rasterization, spatial smudge pickup/transport, and live layer compositing run on the GPU when a supported hardware adapter is available. The existing CPU renderer remains available and is selected automatically if initialization or a GPU batch fails.
+
+Open **Actions → Prefs → Drawing renderer** to see the active backend/device and choose **GPU · Auto** or **CPU**. The choice persists. GPU initialization and painting stay off the UI thread. Existing artwork, selection constraints, alpha lock, cancellation, and Undo keep their previous document format and behavior.
+
+Layers are cached on the GPU with a 128 MiB residency budget. Input is submitted in batches of up to 128 dabs; only changed pixels are read back into the CPU mirror. This is an initial compute integration: bitmap presentation, readback synchronization, full-layer stroke snapshots, CPU ColorDrop/adjustments/export, and a future tiled renderer remain performance work. Auto keeps brushes below 32 px and small composite patches on the CPU to avoid GPU overhead. See [measured results and architecture](docs/GPU.md).
+
+Local tests ran on a physical Metal GPU, including deliberate device loss and CPU recovery. Android Vulkan binaries are built for ARM64 and x86-64; Xiaomi Pad 7 driver compatibility, sustained latency, thermals, and memory use still need physical-device testing. This release does not claim Procreate-level performance.
+
 ## ColorDrop and brush update 0.1.5
 
 Drag the active color circle from the top-right toolbar into a closed shape. Hold still briefly to start the fill preview, then slide left for a lower threshold or right for a higher threshold. Release to commit; cancel the gesture to restore the previous drawing. The fill expands outward from the drop point over 420 ms when system animations are enabled. Live threshold changes create only one Undo step and defer autosave until the gesture finishes.
@@ -85,7 +95,7 @@ export JAVA_HOME=/path/to/jdk-21
 bash scripts/build-android.sh
 ```
 
-The resulting APK is copied to `releases/inkstone-0.1.5-debug.apk`. The build fails if either native ABI library is missing, rather than producing an APK that cannot open the engine.
+The resulting APK is copied to `releases/inkstone-0.1.6-debug.apk`. The build fails if either native ABI library is missing, rather than producing an APK that cannot open the engine.
 
 Open the `android` folder in Android Studio for editing and device installation. Build the Rust libraries with `bash scripts/build-native.sh` after changing the engine.
 
@@ -117,7 +127,7 @@ Rust engine
 Android Bitmap + hardware-backed Canvas presentation
 ```
 
-The current brush rasterizer and compositing run on the CPU in a dedicated worker thread. Android presents the result through its hardware-backed canvas. **wgpu is not wired into this version.** GPU rasterization, tiled rendering, and device latency work remain major next steps. Avoid treating this preview as a performance equivalent to Procreate.
+The drawing worker uses Rust `wgpu` compute for brush/eraser rasterization, spatial smudge, and live layer compositing, with Vulkan on Android and a CPU fallback. Android still presents a bitmap backed by synchronized CPU pixels. ColorDrop, adjustments, document encoding, previews, and export remain CPU operations. Tiled rendering, direct GPU presentation, input prediction, and physical-device latency work remain next steps. See [GPU architecture and validation](docs/GPU.md).
 
 Undo stores pixel patches and structural changes with a memory budget, up to 250 actions. The actual history length depends on canvas size and edits. Canvas area is capped at 16 megapixels, with a separate layer-pixel budget. Editable documents contain versioned JSON and run-length-encoded straight-alpha layer pixels, compressed with gzip by Android. They are unrelated to the `.procreate` format.
 

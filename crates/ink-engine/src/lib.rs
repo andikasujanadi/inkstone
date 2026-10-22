@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::sync::Arc;
+mod gpu;
 
 const MAX_PIXELS: usize = 16_777_216;
 const PIXEL_BUDGET: usize = 67_108_864;
@@ -65,9 +66,12 @@ impl Default for Brush {
     }
 }
 
-struct Stroke { rect: [usize; 4], before: Vec<u32>, layer: usize, last: Sample, filtered: Sample, brush: Brush, seed: u32, smudge: Option<Vec<u32>> }
+struct Stroke { rect: [usize; 4], before: Vec<u32>, layer: usize, last: Sample, filtered: Sample, brush: Brush, seed: u32, smudge: Option<Vec<u32>>, pending: Vec<gpu::Dab>, gpu_paint: bool }
 
 pub struct Engine {
+    gpu: Option<gpu::Gpu>,
+    renderer_requested: String,
+    renderer_error: Option<String>,
     pub width: usize,
     pub height: usize,
     dpi: u32,
@@ -96,7 +100,7 @@ pub fn composite(dst: u32, src: u32, opacity: f32, mode: &str) -> u32 {
     let da = channel(dst, 24);
     let a = sa + da * (1.0 - sa);
     let mut out = [0.0; 3];
-    let darker_source = mode=="Darker Colour" && [16,8,0].iter().map(|shift|channel(src,*shift)).sum::<f32>() < [16,8,0].iter().map(|shift|channel(dst,*shift)).sum::<f32>();
+    let darker_source = mode=="Darker Colour" && [16,8,0].iter().map(|shift|(src>>shift)&255).sum::<u32>() < [16,8,0].iter().map(|shift|(dst>>shift)&255).sum::<u32>();
     for (i, shift) in [16, 8, 0].iter().enumerate() {
         let s = channel(src, *shift); let d = channel(dst, *shift);
         let b = match mode {
@@ -125,7 +129,7 @@ impl Engine {
         if width < 16 || height < 16 || width > 8192 || height > 8192 || pixels > MAX_PIXELS {
             return Err("Canvas must be at least 16 × 16 and at most 16 megapixels".into());
         }
-        Ok(Self { width, height, dpi:300, state: State { layers: vec![Layer {
+        Ok(Self { gpu: None, renderer_requested: "cpu".into(), renderer_error: None, width, height, dpi:300, state: State { layers: vec![Layer {
             id: 1, name: "Layer 1".into(), visible: true, opacity: 1.0, blend: "Normal".into(),
             alpha_lock: false, locked:false, clipping: false, pixels: Arc::new(vec![0; pixels]),
         }], active: 0, background: 0xfffaf9f6, background_visible: true }, next_id: 2,
@@ -213,7 +217,8 @@ impl Engine {
         brush.pressure_opacity = finite(brush.pressure_opacity, 0.0).clamp(0.0, 1.0);
         if brush.kind == 6 || brush.kind>=128 { brush.color = 0; }
         let mut stroke = Stroke { rect: [self.width,self.height,0,0], before: self.state.layers[self.state.active].pixels.as_ref().clone(),
-            layer: self.state.active, last: p, filtered: p, brush, seed: 0x736561, smudge: None };
+            layer: self.state.active, last: p, filtered: p, brush, seed: 0x736561, smudge: None, pending: Vec::new(), gpu_paint: brush.size>=32.0 };
+        if stroke.gpu_paint { if let Some(gpu)=&mut self.gpu { gpu.selection(self.selection.as_deref()); } }
         self.stamp(p, &mut stroke);
         self.stroke = Some(stroke);
     }
@@ -240,6 +245,7 @@ impl Engine {
     }
 
     fn stamp(&mut self, p: Sample, stroke: &mut Stroke) {
+        if stroke.pending.len() >= gpu::MAX_DABS { self.flush_stroke(stroke); }
         let brush = stroke.brush;
         let pressure = finite(p.pressure, 1.0).clamp(0.0, 1.0).powf(0.7);
         let mut radius = brush.size * 0.5 * (1.0 - brush.pressure_size + brush.pressure_size * pressure).max(0.08);
@@ -248,6 +254,19 @@ impl Engine {
         let y0 = ((p.y - radius - 1.0).floor().max(0.0) as usize).min(self.height);
         let x1 = ((p.x + radius + 1.0).ceil().max(0.0) as usize).min(self.width);
         let y1 = ((p.y + radius + 1.0).ceil().max(0.0) as usize).min(self.height);
+        if self.gpu.is_some() && stroke.gpu_paint {
+            let smudging=brush.kind==6 || brush.kind>=128;
+            let initial=smudging && stroke.smudge.is_none();
+            if initial { stroke.smudge=Some(Vec::new()); }
+            stroke.pending.push(gpu::Dab { sample:p, params:gpu::Params {
+                meta:[self.width as u32,self.height as u32,brush.kind as u32,self.state.layers[stroke.layer].alpha_lock as u32],
+                rect:[x0 as u32,y0 as u32,x1 as u32,y1 as u32],
+                dab:[p.x,p.y,radius,brush.opacity*brush.flow*(1.0-brush.pressure_opacity+brush.pressure_opacity*pressure)],
+                flags:[brush.color,stroke.seed,self.selection.is_some() as u32,initial as u32],region:[0;4],
+            }});
+            if !initial { stroke.seed=stroke.seed.wrapping_add(1); }
+            return;
+        }
         let selected = &self.selection;
         let layer = &mut self.state.layers[stroke.layer];
         let lock = layer.alpha_lock;
@@ -331,7 +350,46 @@ impl Engine {
         }
     }
 
+    pub fn set_renderer(&mut self, mode:&str)->Result<(),String> {
+        if !matches!(mode,"auto"|"cpu") {return Err("Renderer must be auto or cpu".into());}
+        self.end();self.renderer_requested=mode.into();self.renderer_error=None;
+        if mode=="cpu" {self.gpu=None;}
+        else if self.gpu.is_none() {
+            match gpu::Gpu::new() {Ok(gpu)=>self.gpu=Some(gpu),Err(e)=>self.renderer_error=Some(e)}
+        }
+        self.dirty=true;Ok(())
+    }
+    pub fn flush_gpu(&mut self) {
+        if let Some(mut stroke)=self.stroke.take() {self.flush_stroke(&mut stroke);self.stroke=Some(stroke);}
+    }
+    fn flush_stroke(&mut self,stroke:&mut Stroke) {
+        if stroke.pending.is_empty(){return;}
+        let pending=std::mem::take(&mut stroke.pending);
+        let mut rect=[self.width,self.height,0,0];
+        for dab in &pending {let r=dab.params.rect; if r[0]<r[2] && r[1]<r[3] {rect[0]=rect[0].min(r[0] as usize);rect[1]=rect[1].min(r[1] as usize);rect[2]=rect[2].max(r[2] as usize);rect[3]=rect[3].max(r[3] as usize);}}
+        // An off-canvas smudge still picks up transparency and updates its carried tip.
+        let dispatch_rect=if rect[0]>=rect[2] || rect[1]>=rect[3] {[0,0,1,1]}else{rect};
+        let smudging=stroke.brush.kind==6 || stroke.brush.kind>=128;
+        let result=self.gpu.as_mut().unwrap().paint(&mut self.state.layers[stroke.layer],&pending,dispatch_rect,smudging);
+        match result {
+            Ok(tip)=>{
+                if smudging {stroke.smudge=tip;}
+                if rect[0]<rect[2] && rect[1]<rect[3] {
+                    for i in 0..2 {stroke.rect[i]=stroke.rect[i].min(rect[i]);stroke.rect[i+2]=stroke.rect[i+2].max(rect[i+2]);}
+                    let damage=self.damage.get_or_insert(rect);
+                    for i in 0..2 {damage[i]=damage[i].min(rect[i]);damage[i+2]=damage[i+2].max(rect[i+2]);}
+                }
+            },
+            Err(e)=>{
+                // The CPU mirror changes only after a successful GPU readback, so replay this batch exactly once.
+                self.gpu=None;self.renderer_error=Some(e);stroke.seed=pending[0].params.flags[1];
+                if pending[0].params.flags[3]!=0 {stroke.smudge=None;}
+                for dab in pending {self.stamp(dab.sample,stroke);}
+            }
+        }
+    }
     pub fn end(&mut self) {
+        self.flush_gpu();
         if let Some(s) = self.stroke.take() {
             // Recording undo changes no pixels; keep the pending stroke damage intact.
             let was_dirty = self.dirty;
@@ -357,6 +415,7 @@ impl Engine {
     }
 
     pub fn render(&mut self, bytes: &mut [u8], background: bool) -> bool {
+        self.flush_gpu();
         if bytes.len() < self.width * self.height * 4 { return false; }
         for y in 0..self.height { for x in 0..self.width {
             let c = self.color_at(x, y, background);
@@ -372,20 +431,33 @@ impl Engine {
     }
 
     pub fn render_patch(&mut self, force: bool) -> Option<Vec<i32>> {
+        self.flush_gpu();
         let rect = if force || self.dirty { [0, 0, self.width, self.height] }
             else { self.damage? };
         let [x0, y0, x1, y1] = rect;
         let mut patch = Vec::with_capacity(4 + (x1 - x0) * (y1 - y0));
         patch.extend([x0 as i32, y0 as i32, (x1 - x0) as i32, (y1 - y0) as i32]);
-        for y in y0..y1 { for x in x0..x1 {
-            patch.push(self.color_at(x, y, true) as i32);
-        }}
+        // Tiny patches cost less to composite locally than to submit and read back from the GPU.
+        let gpu_pixels=if force || (x1-x0)*(y1-y0)*self.state.layers.len()>=32768 {
+            self.gpu.as_mut().map(|gpu|gpu.composite(&self.state.layers,self.width,rect,if self.state.background_visible {self.state.background}else{0}))
+        }else{None};
+        match gpu_pixels {
+            Some(Ok(pixels))=>patch.extend(pixels.into_iter().map(|c|c as i32)),
+            result=>{
+                if let Some(Err(e))=result {self.gpu=None;self.renderer_error=Some(e);}
+                for y in y0..y1 {for x in x0..x1 {patch.push(self.color_at(x,y,true) as i32);}}
+            }
+        }
         self.dirty = false; self.damage = None;
         Some(patch)
     }
 
     pub fn info(&self) -> Value {
-        json!({"width":self.width,"height":self.height,"active":self.state.active,
+        json!({"renderer":if self.gpu.is_some(){"gpu"}else{"cpu"},"rendererRequested":self.renderer_requested,
+            "rendererDevice":self.gpu.as_ref().map(|g|g.description.as_str()),"rendererError":self.renderer_error,
+            "gpuComposites":self.gpu.as_ref().map_or(0,|g|g.composites),
+            "gpuBatches":self.gpu.as_ref().map_or(0,|g|g.batches),"gpuDabs":self.gpu.as_ref().map_or(0,|g|g.dabs),
+            "width":self.width,"height":self.height,"active":self.state.active,
             "dpi":self.dpi,"undo":self.undo.len(),"redo":self.redo.len(),"background":self.state.background,
             "backgroundVisible":self.state.background_visible,"selection":self.selection.is_some(),
             "layers":self.state.layers.iter().map(|l| json!({"id":l.id,"name":l.name,
@@ -415,6 +487,7 @@ impl Engine {
                 if let Some(b)=v["visible"].as_bool(){self.state.background_visible=b;}
                 self.dirty=true;
             },
+            "renderer" => {self.set_renderer(v["mode"].as_str().unwrap_or("auto"))?;},
             "info" => {},
             "undo" => { self.undo(); }, "redo" => { self.redo(); },
             "active" => { if index < self.state.layers.len() { self.state.active = index; } },
@@ -631,7 +704,8 @@ impl Engine {
         self.pixel_change(self.state.active,before); Ok(())
     }
 
-    pub fn save(&self)->Result<Vec<u8>,String> {
+    pub fn save(&mut self)->Result<Vec<u8>,String> {
+        self.flush_gpu();
         let doc=SavedDocument {version:1,width:self.width,height:self.height,active:self.state.active,
             dpi:self.dpi,background:self.state.background,background_visible:self.state.background_visible,
             layers:self.state.layers.iter().map(|l| SavedLayer {id:l.id,name:l.name.clone(),visible:l.visible,
@@ -715,3 +789,6 @@ mod android;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod gpu_tests;

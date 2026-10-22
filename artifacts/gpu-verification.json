@@ -1,0 +1,47 @@
+{
+  "version": "0.1.6",
+  "device": "Metal \u00b7 Apple A18 Pro",
+  "physical_gpu_tests_passed": 3,
+  "headless_tests_passed": 28,
+  "android_framework_tests_passed": 17,
+  "android_vulkan_device_tested": false,
+  "benchmark": {
+    "canvas": [
+      1600,
+      1200
+    ],
+    "samples": 80,
+    "batches": 20,
+    "pen_size": 12,
+    "airbrush_and_smudge_size": 400,
+    "milliseconds": {
+      "pen": {
+        "cpu": 6,
+        "auto": 6
+      },
+      "airbrush": {
+        "cpu": 181,
+        "auto": 68
+      },
+      "smudge": {
+        "cpu": 347,
+        "auto": 91
+      }
+    }
+  },
+  "note": "Release-mode local hardware test. Auto retains CPU for thin pens and small composite patches; Android latency is unverified.",
+  "additional_run_milliseconds": {
+    "pen": {
+      "cpu": 4,
+      "auto": 4
+    },
+    "airbrush": {
+      "cpu": 195,
+      "auto": 185
+    },
+    "smudge": {
+      "cpu": 383,
+      "auto": 76
+    }
+  }
+}

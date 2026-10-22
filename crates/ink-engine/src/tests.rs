@@ -57,7 +57,7 @@ fn alpha_lock_preserves_coverage() {
 fn document_roundtrip_and_malformed_input() {
     let mut e=Engine::new(32,32).unwrap();dot(&mut e,15.0,15.0,8.0,0x8899aabb);
     e.command(&json!({"op":"duplicate"})).unwrap();e.command(&json!({"op":"layer","opacity":0.5,"blend":"Multiply"})).unwrap();
-    let bytes=e.save().unwrap();let restored=Engine::load(&bytes).unwrap();assert_eq!(restored.save().unwrap(),bytes);
+    let bytes=e.save().unwrap();let mut restored=Engine::load(&bytes).unwrap();assert_eq!(restored.save().unwrap(),bytes);
     assert!(Engine::load(b"{}").is_err());assert!(Engine::new(8192,8192).is_err());
     assert!(decode_runs(&[(u32::MAX,0)],1024).is_err());assert!(decode_runs(&[(1,0)],1024).is_err());
 }

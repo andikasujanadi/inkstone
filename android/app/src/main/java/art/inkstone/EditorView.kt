@@ -377,8 +377,10 @@ class EditorView(val activity: MainActivity, val session: DrawingSession) : Fram
             }
             "Share"->{for(format in listOf("Inkstone","PNG","JPEG"))body.addView(row(format,if(format=="Inkstone")"Editable layers" else "Flattened image"){dismissPanel();activity.export(format)})}
             "Video"->{body.addView(text("Time-lapse recording is not available in this preview.",15f,0xffbfc8cb.toInt()),LinearLayout.LayoutParams(-1,dp(90)))}
-            "Help"->{body.addView(row("About Inkstone","0.1.5"){activity.message("Independent Android painting app. See README and the parity tracker for supported features.")})}
+            "Help"->{body.addView(row("About Inkstone","0.1.6"){activity.message("Independent Android painting app. See README and the parity tracker for supported features.")})}
             "Prefs"->{
+                val rendering=preferenceGroup(body)
+                rendering.addView(row("Drawing renderer",if(session.rendererMode=="auto")"GPU · Auto" else "CPU"){rendererSettings()})
                 val basic=preferenceGroup(body)
                 toggle(basic,"Pen pressure",session.pressureEnabled){session.pressureEnabled=it;activity.savePreferences()}
                 toggle(basic,"Hold to perfect shape",session.quickShape){session.quickShape=it;activity.savePreferences()}
@@ -407,6 +409,16 @@ class EditorView(val activity: MainActivity, val session: DrawingSession) : Fram
     private fun preferenceGroup(body:LinearLayout):LinearLayout=LinearLayout(activity).apply{
         orientation=LinearLayout.VERTICAL;background=rounded(0x5c080808,StudioShape.CORNER_DP);setPadding(0,dp(3),0,dp(3));clipToOutline=true
         body.addView(this,LinearLayout.LayoutParams(-1,-2).apply{setMargins(dp(2),dp(5),dp(2),dp(13))})
+    }
+    private fun rendererSettings(){
+        val details=session.info
+        val active=if(details.optString("renderer")=="gpu")"GPU · ${details.optString("rendererDevice")}" else "CPU"
+        val reason=details.optString("rendererError").takeUnless{it.isBlank()||it=="null"}
+        AlertDialog.Builder(activity).setTitle("Drawing renderer")
+            .setMessage("Active: $active"+(reason?.let{"\nGPU fallback: $it"}?:"")+"\n\nAuto uses Vulkan for larger brushes, smudge and layer compositing when supported. Small work stays on CPU to avoid GPU overhead. CPU keeps the software renderer. Changes apply after the current stroke.")
+            .setPositiveButton("GPU · Auto"){_,_->session.setRenderer("auto"){activity.savePreferences();showNotice(if(session.info.optString("renderer")=="gpu")"GPU enabled" else "CPU fallback active")}}
+            .setNeutralButton("CPU"){_,_->session.setRenderer("cpu"){activity.savePreferences();showNotice("CPU renderer enabled")}}
+            .setNegativeButton("Close",null).show()
     }
     private fun cursorSettings(){
         if(!replacingPanel)dismissPanel();panel("Cursor","Advanced cursor settings",410,left=true){body->

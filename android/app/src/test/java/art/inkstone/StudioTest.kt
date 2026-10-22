@@ -347,4 +347,20 @@ class StudioTest {
         val handle=NativeBridge.create(32,32);assertTrue(JSONObject(NativeBridge.load(handle,byteArrayOf(1,2,3))).has("error"));NativeBridge.destroy(handle)
         shutdown(controller)
     }
+    @Test fun rendererPreferenceAndDocumentRoundTrip(){
+        val controller=Robolectric.buildActivity(MainActivity::class.java).setup();val activity=controller.get()
+        activity.newCanvas(96,64);val session=checkNotNull(activity.session);val editor=checkNotNull(activity.editor)
+        var configured=false;session.setRenderer("cpu"){configured=true};until{configured}
+        assertEquals("cpu",session.info.getString("renderer"));activity.savePreferences()
+        assertEquals("cpu",activity.getSharedPreferences("studio",0).getString("rendererMode",null))
+        session.stroke(0,floatArrayOf(10f,30f,1f,0f));session.stroke(2,floatArrayOf(80f,30f,1f,0f));until{session.info.getInt("undo")==1}
+        var saved:ByteArray?=null;session.snapshot{bytes,image->saved=bytes;image?.recycle()};until{saved!=null}
+        var loaded=false;session.load(checkNotNull(saved)){loaded=it};until{loaded}
+        assertEquals("cpu",session.info.getString("renderer"));assertEquals(96,session.canvasWidth)
+        render(editor,"renderer-preferences");click(editor,"Actions");click(editor,"Prefs");click(editor,"Drawing renderer")
+        val dialog=checkNotNull(org.robolectric.shadows.ShadowAlertDialog.getLatestAlertDialog())
+        assertTrue(dialog.isShowing);dialog.getButton(android.app.AlertDialog.BUTTON_NEGATIVE).performClick()
+        shutdown(controller)
+    }
+
 }

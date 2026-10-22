@@ -20,3 +20,13 @@ Start with a new artwork; export an `.inkstone` copy before uninstalling a previ
 Include device model, Android/OS version, pen model, APK version, canvas dimensions, layer count, reproduction steps, and whether finger or pen input was used. Include a small exported test document when relevant, using non-private artwork.
 
 Physical Xiaomi testing and a broader Android device matrix remain pending. Local tests cannot certify drawing latency, palm rejection quality, or device GPU behavior.
+
+## GPU renderer — 0.1.6
+
+1. Install over the previous preview, export an editable backup, and open Actions → Prefs → Drawing renderer. Record the active device/backend and any fallback reason. Auto should report Vulkan on a supported Xiaomi GPU. A software adapter is rejected in favor of the CPU renderer.
+2. On a 1600 × 1200 canvas, compare GPU · Auto and CPU using a 400 px Soft Airbrush and Soft Brush smudge. Draw long lines, then 60 short strokes; watch for delayed marks, missing endpoints, or increasing lag.
+3. Repeat with 4+ visible layers, alpha lock, a selection, clipping, each blend mode, Undo/Redo, ColorDrop followed by drawing, and saving/reopening. Change renderer after a stroke and verify artwork is preserved.
+4. Repeat after backgrounding/foregrounding and rotating the tablet. Run for 10 minutes and record heat, battery use, UI freezes, and memory failures. Compare thin pen strokes too; GPU submission/readback overhead may outweigh raster savings for small brushes.
+5. If Auto falls back, capture the reason from Drawing renderer and continue with CPU. Include APK version, HyperOS version, canvas size, layer count, and brush name when reporting.
+
+Metal tests on the development Mac and APK packaging checks do not certify the Android Vulkan driver or physical stylus latency.

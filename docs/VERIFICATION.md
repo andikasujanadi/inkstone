@@ -1,14 +1,22 @@
-# Preview verification — 22 October 2026
+# Preview verification — 23 October 2026
 
-Version 0.1.5, package `art.inkstone.preview`.
+Version 0.1.6, package `art.inkstone.preview`.
 
-- Rust engine: 26 tests passed, zero failures.
-- Android integration: 16 Robolectric tests passed against SDK 35 with native graphics and the real host Rust JNI library.
+- Rust engine: 28 tests passed; three physical-GPU tests are opt-in and were separately run successfully, zero failures.
+- Android integration: 17 Robolectric tests passed against SDK 35 with native graphics and the real host Rust JNI library.
 - Tested document round trips, native library calls, finger input and cancellation, saved gallery thumbnails, tablet and phone panels, invalid document rejection, and displayed color values.
 - `artifacts/editor-tablet.png` is the user-supplied device screenshot used in the README. Other Android View renders in `artifacts/` are desktop framework renders. The tablet rendering test writes `editor-tablet-framework.png` to preserve the supplied screenshot.
 - Android lint: zero errors, 52 warnings, mainly draw allocations, fixed layout direction, and platform metadata. These remain follow-up work.
 - Debug APK assembled and APK v2 signature verified. ARM64 and x86-64 libraries include all eleven JNI entry points and 16 KB-aligned ELF load segments.
-- APK size: 2,876,561 bytes. SHA-256: `4dcf72d177e99ae657a290d65c326b207dda418f506eff017987a2805bc533c6`.
+- APK size and SHA-256 are recorded in `artifacts/apk-verification.json`.
+
+## GPU checks — 0.1.6
+
+Three opt-in Rust tests ran on the physical Metal adapter reported as Apple A18 Pro. They check all procedural brush families and erasing, spatial smudge, all fifteen blend modes with partial alpha, visibility/clipping/background, selection and alpha lock, saved pixel round trips, cancellation, Undo/Redo cache invalidation, and intentional device loss followed by exact CPU batch recovery. GPU brush differences allow up to four 8-bit channel levels after accumulated strokes; compositing allows one. CPU fallback replays the pending batch only after a failed GPU readback, without adding another Undo step.
+
+Both WGSL modules also pass Naga parsing/validation without an adapter, so CI checks the shaders even when no hardware GPU is present. The Android integration suite adds renderer preference persistence, CPU selection, a drawing/save/load round trip, and the renderer settings dialog. APK builds include Vulkan compute support for ARM64 and x86-64. Physical Android Vulkan execution has not been tested here.
+
+See [architecture, repeatable benchmark, and limits](GPU.md).
 
 ## Screenshot-based interface revision
 
@@ -36,7 +44,7 @@ The library now has 46 procedural presets. ColorDrop uses coalesced preview requ
 
 ## Boundaries
 
-The user tested 0.1.1 on Xiaomi Pad 7 and reported interrupted strokes and severe lag. Version 0.1.2 fixes the identified save/render bottlenecks and awaits a repeat hardware test. See PERFORMANCE.md. Installation, pen pressure calibration, palm rejection, hover, side buttons, sustained latency, device rotation and large-document memory behavior still need hardware checks. The engine currently rasterizes and composites on the CPU. This preview is not complete Procreate parity; see PARITY.md.
+The user tested 0.1.1 on Xiaomi Pad 7 and reported interrupted strokes and severe lag. Version 0.1.2 fixes the identified save/render bottlenecks and awaits a repeat hardware test. See PERFORMANCE.md. Installation, pen pressure calibration, palm rejection, hover, side buttons, sustained latency, device rotation and large-document memory behavior still need hardware checks. The live engine now uses GPU compute when available, with CPU fallback. ColorDrop, adjustments, export and bitmap presentation still involve CPU work; see GPU.md. This preview is not complete Procreate parity; see PARITY.md.
 
 Source is published at https://github.com/bramastahartono20/inkstone. GitHub Actions runs on pushes; consult the Actions page for current remote verification. The test counts above describe the verified local build.
 

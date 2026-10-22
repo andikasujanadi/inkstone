@@ -103,6 +103,11 @@ class DrawingSession(width: Int, height: Int) : Closeable {
     var opacity = 1f
     var flow = preset.flow
     var stabilization = .12f
+    var rendererMode="auto"; private set
+    fun setRenderer(mode:String,then:()->Unit={}) {
+        rendererMode=mode
+        command("renderer",JSONObject().put("mode",mode)){then()}
+    }
     var pressureEnabled=true
     var canvasLocked=false
     var quickShape=true

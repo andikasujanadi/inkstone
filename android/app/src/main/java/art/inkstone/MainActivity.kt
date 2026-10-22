@@ -52,6 +52,7 @@ class MainActivity : Activity() {
         }.onFailure { message(it.message ?: "Cannot create this canvas") }
     }
     private fun configure(s: DrawingSession) {
+        s.setRenderer(prefs.getString("rendererMode","auto")?:"auto")
         s.pressureEnabled=prefs.getBoolean("pressureEnabled",true);s.canvasLocked=prefs.getBoolean("canvasLocked",false);s.quickShape=prefs.getBoolean("quickShape",true)
         s.fingerDrawing = prefs.getBoolean("finger", true)
         s.rightSidebar = prefs.getBoolean("right", false)
@@ -68,7 +69,7 @@ class MainActivity : Activity() {
     }
     fun savePreferences() {
         val s = session ?: return
-        prefs.edit().putBoolean("pressureEnabled",s.pressureEnabled).putBoolean("canvasLocked",s.canvasLocked).putBoolean("quickShape",s.quickShape).putString("cursorStyle",s.cursorStyle).putFloat("cursorOpacity",s.cursorOpacity)
+        prefs.edit().putString("rendererMode",s.rendererMode).putBoolean("pressureEnabled",s.pressureEnabled).putBoolean("canvasLocked",s.canvasLocked).putBoolean("quickShape",s.quickShape).putString("cursorStyle",s.cursorStyle).putFloat("cursorOpacity",s.cursorOpacity)
             .putBoolean("twoFingerUndo",s.twoFingerUndo).putBoolean("threeFingerRedo",s.threeFingerRedo)
             .putBoolean("fourFingerFullScreen",s.fourFingerFullScreen).putBoolean("holdEyedropper",s.holdEyedropper).putBoolean("penButtonErase",s.penButtonErase)
             .putBoolean("finger", s.fingerDrawing).putBoolean("right", s.rightSidebar)
