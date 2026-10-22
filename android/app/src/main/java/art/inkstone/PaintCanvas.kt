@@ -95,6 +95,28 @@ class PaintCanvas(context: Context, val session: DrawingSession) : View(context)
         updateMatrix(); val p = floatArrayOf(x, y); inverse.mapPoints(p); return PointF(p[0], p[1])
     }
 
+    internal fun colorDropPoint(x:Float,y:Float)=documentPoint(x,y)
+    private var fillBefore:Bitmap?=null
+    private var fillCenter=PointF()
+    private var fillAmount=1f
+    private var fillWaiting=false
+    private var fillAnimator:android.animation.ValueAnimator?=null
+    fun prepareFillAnimation(point:PointF){
+        cancelFillAnimation()
+        if(!android.animation.ValueAnimator.areAnimatorsEnabled())return
+        val scale=min(1f,2048f/max(session.bitmap.width,session.bitmap.height))
+        fillBefore=runCatching{Bitmap.createScaledBitmap(session.bitmap,max(1,(session.bitmap.width*scale).toInt()),max(1,(session.bitmap.height*scale).toInt()),true).let{if(it===session.bitmap)it.copy(Bitmap.Config.ARGB_8888,false) else it}}.getOrNull()
+        fillCenter=point;fillAmount=0f;fillWaiting=fillBefore!=null
+    }
+    fun onRenderedFrame(){
+        if(fillWaiting){fillWaiting=false;fillAnimator=android.animation.ValueAnimator.ofFloat(0f,1f).apply{
+            duration=420;interpolator=android.view.animation.DecelerateInterpolator()
+            addUpdateListener{fillAmount=it.animatedValue as Float;invalidate()}
+            addListener(object:android.animation.AnimatorListenerAdapter(){override fun onAnimationEnd(animation:android.animation.Animator){fillBefore?.recycle();fillBefore=null;invalidate()}});start()
+        }}
+        invalidate()
+    }
+    fun cancelFillAnimation(){fillAnimator?.cancel();fillAnimator=null;fillBefore?.recycle();fillBefore=null;fillWaiting=false;fillAmount=1f;invalidate()}
     override fun onDraw(canvas: Canvas) {
         canvas.drawColor(if (session.lightInterface) 0xffb5b5b5.toInt() else 0xff292929.toInt())
         paint.style=Paint.Style.STROKE;paint.strokeWidth=dp*.65f
@@ -115,7 +137,12 @@ class PaintCanvas(context: Context, val session: DrawingSession) : View(context)
                 x += tile
             }; y += tile }
         }
+        fillBefore?.let{canvas.drawBitmap(it,null,RectF(0f,0f,w,h),paint)}
+        val fillSave=canvas.save()
+        if(fillBefore!=null){val radius=hypot(max(fillCenter.x,w-fillCenter.x),max(fillCenter.y,h-fillCenter.y))*fillAmount
+            canvas.clipPath(Path().apply{addCircle(fillCenter.x,fillCenter.y,radius,Path.Direction.CW)})}
         canvas.drawBitmap(session.bitmap, 0f, 0f, paint)
+        canvas.restoreToCount(fillSave)
         if (session.guide) {
             paint.color = 0x554a92cc; paint.strokeWidth = 1f / zoom
             var x = 0f; while (x <= w) { canvas.drawLine(x, 0f, x, h, paint); x += 80f }

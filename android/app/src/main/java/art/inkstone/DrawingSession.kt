@@ -32,17 +32,52 @@ val brushPresets = listOf(
 
 val brushCategories=listOf("Recent","Sketching","Inking","Drawing","Painting","Artistic","Calligraphy","Airbrushing","Textures","Abstract","Charcoals","Elements","Spraypaints","Materials","Vintage","Luminance","Industrial","Organic","Water","Imported")
 private fun additionalPresets():List<BrushPreset> {
-    val air=listOf("Soft Brush","Medium Brush","Medium Hard Brush","Hard Brush","Soft Blend","Medium Blend","Medium Hard Blend","Hard Blend","Medium Airbrush")
-        .mapIndexed { i,name->BrushPreset(name,"Airbrushing",if(i==3||i==7)0 else 2,90f,if(i in 4..7).3f else .8f,.25f,.5f) }
-    val originals=listOf("Drawing" to "Expressive Line","Artistic" to "Bristle","Textures" to "Rough Grain","Abstract" to "Broken Marks","Elements" to "Dust","Spraypaints" to "Fine Mist","Materials" to "Dry Surface","Vintage" to "Faded Ink","Luminance" to "Soft Glow","Industrial" to "Hard Edge","Organic" to "Soft Grain","Water" to "Diluted Wash")
-        .map { (group,name)->BrushPreset(name,group,if(group in listOf("Water","Luminance"))4 else 3,48f,.6f,.7f,.3f) }
+    val air=listOf(
+        BrushPreset("Soft Brush","Airbrushing",2,120f,.8f,.15f,.35f),
+        BrushPreset("Medium Brush","Airbrushing",8,100f,.8f,.2f,.3f),
+        BrushPreset("Medium Hard Brush","Airbrushing",9,90f,.8f,.2f,.25f),
+        BrushPreset("Hard Brush","Airbrushing",0,80f,1f,.25f,0f),
+        BrushPreset("Soft Blend","Airbrushing",2,140f,.25f,.1f,.15f),
+        BrushPreset("Medium Blend","Airbrushing",8,120f,.25f,.1f,.15f),
+        BrushPreset("Medium Hard Blend","Airbrushing",9,100f,.25f,.1f,.15f),
+        BrushPreset("Hard Blend","Airbrushing",0,80f,.18f,.1f,.1f),
+        BrushPreset("Medium Airbrush","Airbrushing",8,75f,.55f,.2f,.5f)
+    )
+    val originals=listOf(
+        BrushPreset("Expressive Line","Drawing",0,14f,1f,.9f),
+        BrushPreset("Chalk","Drawing",13,28f,.8f,.55f,.4f),
+        BrushPreset("Pastel","Drawing",14,38f,.8f,.35f,.3f),
+        BrushPreset("Bristle","Artistic",11,54f,.8f,.5f,.2f),
+        BrushPreset("Wide Bristle","Painting",11,90f,.65f,.35f,.2f),
+        BrushPreset("Opaque Round","Painting",0,70f,1f,.5f),
+        BrushPreset("Soft Glaze","Painting",2,160f,.3f,.15f,.3f),
+        BrushPreset("Chisel Marker","Inking",12,28f,.85f,.2f),
+        BrushPreset("Fine Liner","Inking",0,3f,1f,.1f),
+        BrushPreset("Soft Charcoal","Charcoals",13,65f,.65f,.5f,.5f),
+        BrushPreset("Rough Grain","Textures",14,75f,.65f,.4f,.4f),
+        BrushPreset("Broken Marks","Abstract",3,48f,.6f,.7f,.3f),
+        BrushPreset("Dust","Elements",10,130f,.6f,.1f,.4f),
+        BrushPreset("Fine Mist","Spraypaints",10,100f,.75f,.15f,.4f),
+        BrushPreset("Wide Spray","Spraypaints",10,220f,.6f,.1f,.3f),
+        BrushPreset("Dry Surface","Materials",14,60f,.7f,.4f,.3f),
+        BrushPreset("Faded Ink","Vintage",13,20f,.5f,.6f,.5f),
+        BrushPreset("Soft Glow","Luminance",2,160f,.45f,.2f,.5f),
+        BrushPreset("Hard Edge","Industrial",12,48f,1f,.1f),
+        BrushPreset("Soft Grain","Organic",14,65f,.55f,.5f,.3f),
+        BrushPreset("Diluted Wash","Water",4,130f,.6f,.3f,.5f),
+        BrushPreset("Soft Wash","Water",2,180f,.25f,.15f,.5f),
+        BrushPreset("Broad Lettering","Calligraphy",7,65f,.8f,.7f)
+    )
     return air+originals
 }
 
 class DrawingSession(width: Int, height: Int) : Closeable {
     private val worker = Executors.newSingleThreadExecutor()
     private val storage = Executors.newSingleThreadExecutor()
-    @Volatile var isStrokeActive=false; private set
+    @Volatile private var penActive=false
+    @Volatile private var dropActive=false
+    val isStrokeActive get()=penActive||dropActive
+    private val dropGeneration=AtomicLong(0)
     private val inputLock=Any()
     private data class StrokeSettings(val kind:Int,val color:Int,val size:Float,val opacity:Float,val flow:Float,val smooth:Float,val pressureSize:Float,val pressureOpacity:Float)
     private class MoveBatch(val settings:StrokeSettings,val chunks:MutableList<FloatArray>,var size:Int)
@@ -99,9 +134,9 @@ class DrawingSession(width: Int, height: Int) : Closeable {
 
     fun stroke(phase: Int, samples: FloatArray, eraser: Boolean = false) {
         if (closed) return
-        if(phase==0)isStrokeActive=true
-        if(phase==2||phase==3)isStrokeActive=false
-        val kind=if(eraser||tool=="Erase")5 else if(tool=="Smudge")6 else preset.kind
+        if(phase==0)penActive=true
+        if(phase==2||phase==3)penActive=false
+        val kind=if(eraser||tool=="Erase")5 else if(tool=="Smudge")128+ preset.kind else preset.kind
         val settings=StrokeSettings(kind,color,if(dynamicBrushScaling)size else size/viewZoom.coerceAtLeast(.02f),opacity,flow,stabilization,if(pressureEnabled)pressureSize else 0f,if(pressureEnabled)pressureOpacity else 0f)
         synchronized(inputLock){
             if(phase==1){
@@ -125,6 +160,30 @@ class DrawingSession(width: Int, height: Int) : Closeable {
     }
     private fun sendStroke(phase:Int,samples:FloatArray,s:StrokeSettings){
         NativeBridge.stroke(handle,phase,samples,s.kind,s.color,s.size,s.opacity,s.flow,s.smooth,s.pressureSize,s.pressureOpacity)
+    }
+
+    private var pendingDrop:JSONObject?=null
+    private var dropQueued=false
+    fun previewColorDrop(values:JSONObject){
+        if(closed)return
+        dropActive=true;dropGeneration.incrementAndGet()
+        synchronized(inputLock){
+            pendingDrop=values
+            if(dropQueued)return
+            dropQueued=true
+            worker.execute{
+                val latest=synchronized(inputLock){val value=pendingDrop;pendingDrop=null;dropQueued=false;value}
+                if(!disposed && latest!=null){latest.put("op","floodPreview")
+                    val result=JSONObject(NativeBridge.command(handle,latest.toString()))
+                    if(result.has("error"))main.post{if(!closed)onError(result.getString("error"))}
+                    changed()
+                }
+            }
+        }
+    }
+    fun finishColorDrop(cancel:Boolean,then:()->Unit){
+        val generation=dropGeneration.get()
+        command(if(cancel)"floodCancel" else "floodCommit"){if(dropGeneration.get()==generation)dropActive=false;then()}
     }
 
     fun command(op: String, values: JSONObject = JSONObject(), then: (JSONObject) -> Unit = {}) {

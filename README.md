@@ -12,7 +12,7 @@ See [verified checks and remaining device tests](docs/VERIFICATION.md).
 
 ## Try the Android app
 
-Download the APK from [GitHub Releases](https://github.com/bramastahartono20/inkstone/releases). Version 0.1.4 is an early-development preview. Enable installation from the app used to open the APK when Android asks.
+Download the APK from [GitHub Releases](https://github.com/bramastahartono20/inkstone/releases). Inkstone is an early-development preview. Enable installation from the app used to open the APK when Android asks.
 
 - Android 8.0 / API 26 or later.
 - ARM64 Android tablets and phones; x86-64 builds are included for testing.
@@ -21,6 +21,14 @@ Download the APK from [GitHub Releases](https://github.com/bramastahartono20/ink
 - Artwork is saved in app-private local storage. Export editable `.inkstone` copies before uninstalling or clearing app data.
 
 Debug builds use package ID `art.inkstone.preview`. Production builds use `art.inkstone`. Debug signing is for testing: configure a stable signing key before publishing release updates.
+
+## ColorDrop and brush update 0.1.5
+
+Drag the active color circle from the top-right toolbar into a closed shape. Hold still briefly to start the fill preview, then slide left for a lower threshold or right for a higher threshold. Release to commit; cancel the gesture to restore the previous drawing. The fill expands outward from the drop point over 420 ms when system animations are enabled. Live threshold changes create only one Undo step and defer autosave until the gesture finishes.
+
+Airbrushes now have separate soft, medium, medium-hard, and hard coverage profiles. The library includes 46 procedural presets, including new chalk, pastel, bristle, marker, spray, and wash choices. Smudge carries a spatial color tip, mixes it with destination pigment, and uses the selected brush footprint rather than repainting one sampled center color. These are Inkstone brush algorithms, not imported Procreate assets.
+
+Live fill previews use scanline flood filling on the active layer, respect selections and alpha lock, and ignore hidden RGB in transparent pixels. Large-canvas preview and smudge latency still need physical-device measurements. Reference-layer filling, pigment physics, and Procreate brush-file import are not implemented.
 
 ## Device feedback update 0.1.4
 
@@ -49,7 +57,7 @@ The screenshot-driven revision adds anchored panel pointers, independently scrol
 ## Working tools
 
 - Paint, smudge, and erase, with pressure-driven brush size and opacity.
-- Thirty-five procedural presets across eighteen populated brush categories; adjustable flow and stabilization.
+- Forty-six procedural presets across eighteen populated brush categories; adjustable flow and stabilization.
 - Pinch, pan, and rotate; two-finger undo; three-finger redo; four-finger interface toggle.
 - Hover cursor and pen-side-button eraser when Android reports those events.
 - Finger-hold eyedropper and dedicated eyedropper tool.
@@ -77,7 +85,7 @@ export JAVA_HOME=/path/to/jdk-21
 bash scripts/build-android.sh
 ```
 
-The resulting APK is copied to `releases/inkstone-0.1.4-debug.apk`. The build fails if either native ABI library is missing, rather than producing an APK that cannot open the engine.
+The resulting APK is copied to `releases/inkstone-0.1.5-debug.apk`. The build fails if either native ABI library is missing, rather than producing an APK that cannot open the engine.
 
 Open the `android` folder in Android Studio for editing and device installation. Build the Rust libraries with `bash scripts/build-native.sh` after changing the engine.
 

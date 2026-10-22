@@ -8,7 +8,7 @@ import sys
 import zipfile
 
 root = pathlib.Path(__file__).resolve().parents[1]
-apk = pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else root / 'releases/inkstone-0.1.4-debug.apk'
+apk = pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else root / 'releases/inkstone-0.1.5-debug.apk'
 required = ['create', 'destroy', 'command', 'stroke', 'render', 'renderPatch', 'preview', 'save', 'load', 'importPixels', 'thumbnails']
 result = {'apk': apk.name, 'sha256': hashlib.sha256(apk.read_bytes()).hexdigest(), 'bytes': apk.stat().st_size, 'abis': {}}
 with zipfile.ZipFile(apk) as archive:

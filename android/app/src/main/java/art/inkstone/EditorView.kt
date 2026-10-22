@@ -13,6 +13,7 @@ import kotlin.math.*
 
 class EditorView(val activity: MainActivity, val session: DrawingSession) : FrameLayout(activity) {
     val canvas = PaintCanvas(activity, session)
+    private var colorDrop:ColorDropController?=null
     private val density = resources.displayMetrics.density
     private fun dp(v: Int) = (v * density).roundToInt()
     private val narrow get() = resources.displayMetrics.widthPixels / density < 620
@@ -49,6 +50,8 @@ class EditorView(val activity: MainActivity, val session: DrawingSession) : Fram
         addView(notice,LayoutParams(-2,-2,Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply{topMargin=dp(barHeight+12)})
         brushHud.visibility=INVISIBLE
         addView(brushHud,LayoutParams(dp(160),dp(160),Gravity.TOP or Gravity.LEFT))
+        colorDrop=ColorDropController(this,canvas,session,{activity.deferAutosave()},{activity.scheduleSave();refreshTools()},::showNotice)
+        icons["Color"]?.let{colorDrop?.bind(it){colors()}}
         canvas.onDismissPanel=::dismissPanel
         canvas.onStrokeStart={activity.deferAutosave()}
         canvas.onChanged={ activity.scheduleSave();refreshTools() }
@@ -62,7 +65,7 @@ class EditorView(val activity: MainActivity, val session: DrawingSession) : Fram
             updateBottom()
         }
         canvas.onInputDevice=::inspectDevice
-        session.onFrame={canvas.invalidate()}
+        session.onFrame={canvas.onRenderedFrame()}
         session.onInfo={refreshTools()}
         session.onError={showNotice(it);activity.message(it)}
         refreshTools()
@@ -104,6 +107,7 @@ class EditorView(val activity: MainActivity, val session: DrawingSession) : Fram
                 }
             };icons[symbol]=control;right.addView(control,LinearLayout.LayoutParams(dp(if(narrow)48 else 64),dp(if(narrow)48 else 44)))
         }
+        colorDrop?.let{drop->icons["Color"]?.let{drop.bind(it){colors()}}}
         if(narrow){toolbar.addView(left,LinearLayout.LayoutParams(-1,dp(50)));toolbar.addView(right,LinearLayout.LayoutParams(-1,dp(50)))}
         else {toolbar.addView(left);toolbar.addView(View(activity),LinearLayout.LayoutParams(0,1,1f));toolbar.addView(right)}
         addView(toolbar,LayoutParams(-1,dp(barHeight),Gravity.TOP))
@@ -373,7 +377,7 @@ class EditorView(val activity: MainActivity, val session: DrawingSession) : Fram
             }
             "Share"->{for(format in listOf("Inkstone","PNG","JPEG"))body.addView(row(format,if(format=="Inkstone")"Editable layers" else "Flattened image"){dismissPanel();activity.export(format)})}
             "Video"->{body.addView(text("Time-lapse recording is not available in this preview.",15f,0xffbfc8cb.toInt()),LinearLayout.LayoutParams(-1,dp(90)))}
-            "Help"->{body.addView(row("About Inkstone","0.1.4"){activity.message("Independent Android painting app. See README and the parity tracker for supported features.")})}
+            "Help"->{body.addView(row("About Inkstone","0.1.5"){activity.message("Independent Android painting app. See README and the parity tracker for supported features.")})}
             "Prefs"->{
                 val basic=preferenceGroup(body)
                 toggle(basic,"Pen pressure",session.pressureEnabled){session.pressureEnabled=it;activity.savePreferences()}
@@ -446,4 +450,6 @@ class EditorView(val activity: MainActivity, val session: DrawingSession) : Fram
             "Pressure range: ${pressure?.let{"${it.min} – ${it.max}"}?:"Not reported"}\nTilt: ${if(tilt!=null)"Reported" else "Not reported"}\n"+
             "Buttons: ${event.buttonState}\n\nFeatures depend on what your device exposes through Android. Xiaomi-specific shortcuts have not been verified."
     }
+    override fun onDetachedFromWindow(){colorDrop?.cancel();canvas.cancelFillAnimation();super.onDetachedFromWindow()}
+
 }

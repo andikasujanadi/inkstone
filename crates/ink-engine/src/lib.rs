@@ -65,7 +65,7 @@ impl Default for Brush {
     }
 }
 
-struct Stroke { rect: [usize; 4], before: Vec<u32>, layer: usize, last: Sample, filtered: Sample, brush: Brush, seed: u32 }
+struct Stroke { rect: [usize; 4], before: Vec<u32>, layer: usize, last: Sample, filtered: Sample, brush: Brush, seed: u32, smudge: Option<Vec<u32>> }
 
 pub struct Engine {
     pub width: usize,
@@ -76,6 +76,7 @@ pub struct Engine {
     undo: Vec<Change>,
     redo: Vec<Change>,
     stroke: Option<Stroke>,
+    flood_preview: Option<(usize, Arc<Vec<u32>>)>,
     selection: Option<Vec<bool>>,
     pub dirty: bool,
     damage: Option<[usize; 4]>,
@@ -128,7 +129,7 @@ impl Engine {
             id: 1, name: "Layer 1".into(), visible: true, opacity: 1.0, blend: "Normal".into(),
             alpha_lock: false, locked:false, clipping: false, pixels: Arc::new(vec![0; pixels]),
         }], active: 0, background: 0xfffaf9f6, background_visible: true }, next_id: 2,
-            undo: vec![], redo: vec![], stroke: None, selection: None, dirty: true, damage: None })
+            undo: vec![], redo: vec![], stroke: None, flood_preview: None, selection: None, dirty: true, damage: None })
     }
 
     fn record(&mut self, change: Change) {
@@ -201,7 +202,7 @@ impl Engine {
     }
 
     pub fn begin(&mut self, p: Sample, mut brush: Brush) {
-        self.end();
+        self.end();self.cancel_flood();
         if self.state.layers[self.state.active].locked { return; }
         if !p.x.is_finite() || !p.y.is_finite() { return; }
         brush.size = finite(brush.size, 16.0).clamp(0.5, 600.0);
@@ -210,9 +211,9 @@ impl Engine {
         brush.stabilization = finite(brush.stabilization, 0.0).clamp(0.0, 0.95);
         brush.pressure_size = finite(brush.pressure_size, 0.8).clamp(0.0, 1.0);
         brush.pressure_opacity = finite(brush.pressure_opacity, 0.0).clamp(0.0, 1.0);
-        if brush.kind == 6 { brush.color = 0; }
+        if brush.kind == 6 || brush.kind>=128 { brush.color = 0; }
         let mut stroke = Stroke { rect: [self.width,self.height,0,0], before: self.state.layers[self.state.active].pixels.as_ref().clone(),
-            layer: self.state.active, last: p, filtered: p, brush, seed: 0x736561 };
+            layer: self.state.active, last: p, filtered: p, brush, seed: 0x736561, smudge: None };
         self.stamp(p, &mut stroke);
         self.stroke = Some(stroke);
     }
@@ -250,14 +251,26 @@ impl Engine {
         let selected = &self.selection;
         let layer = &mut self.state.layers[stroke.layer];
         let lock = layer.alpha_lock;
-        let mut color = brush.color;
-        if brush.kind == 6 {
-            let sx = (p.x.max(0.0) as usize).min(self.width - 1);
-            let sy = (p.y.max(0.0) as usize).min(self.height - 1);
-            let pick = layer.pixels[sy * self.width + sx];
-            if pick >> 24 > 0 { color = pick; stroke.brush.color = pick; }
-            else if color >> 24 == 0 { return; }
+        let color = brush.color;
+        let smudging=brush.kind==6 || brush.kind>=128;
+        let shape=if brush.kind>=128 {brush.kind&127} else if smudging {2} else {brush.kind};
+        if smudging && stroke.smudge.is_none() {
+            let mut tip=vec![0;32*32];
+            for gy in 0..32 {for gx in 0..32 {
+                let sx=(p.x+((gx as f32+0.5)/16.0-1.0)*radius).floor() as i32;
+                let sy=(p.y+((gy as f32+0.5)/16.0-1.0)*radius).floor() as i32;
+                if sx>=0 && sy>=0 && sx<self.width as i32 && sy<self.height as i32 {
+                    tip[gy*32+gx]=layer.pixels[sy as usize*self.width+sx as usize];
+                }
+            }}
+            stroke.smudge=Some(tip);return;
         }
+        // Pick up the destination before writing this dab, preserving direction and color variation.
+        let pickup=if smudging {let mut tip=vec![0;1024];for gy in 0..32 {for gx in 0..32 {
+            let sx=(p.x+((gx as f32+0.5)/16.0-1.0)*radius).floor() as i32;
+            let sy=(p.y+((gy as f32+0.5)/16.0-1.0)*radius).floor() as i32;
+            if sx>=0 && sy>=0 && sx<self.width as i32 && sy<self.height as i32 {tip[gy*32+gx]=layer.pixels[sy as usize*self.width+sx as usize];}
+        }}Some(tip)}else{None};
         let pixels = Arc::make_mut(&mut layer.pixels);
         let strength = brush.opacity * brush.flow * (1.0 - brush.pressure_opacity + brush.pressure_opacity * pressure);
         for y in y0..y1 { for x in x0..x1 {
@@ -267,9 +280,15 @@ impl Engine {
             let d = dx.hypot(dy) / radius.max(0.1);
             if d > 1.0 + 0.7 / radius { continue; }
             let edge = ((1.0 - d) * radius + 0.5).clamp(0.0, 1.0);
-            let texture = match brush.kind {
+            let texture = match shape {
                 1 => { let n = noise(x as u32, y as u32, 91); 0.16 + n * 0.58 },
-                2 => (1.0 - d.clamp(0.0, 1.0)).powf(2.0) * 0.18,
+                2 => ((-4.0*d*d).exp()-(-4.0f32).exp()).max(0.0)/(1.0-(-4.0f32).exp())*0.12,
+                8 | 9 => {let hard=if shape==8{0.35}else{0.7};let t=((1.0-d)/(1.0-hard)).clamp(0.0,1.0);t*t*(3.0-2.0*t)*0.18},
+                10 => if noise(x as u32,y as u32,stroke.seed)>0.965 {0.65*(1.0-d).max(0.0)}else{0.0},
+                11 => {let strands=(dx*1.7).sin().abs();if dy.abs()<radius*0.55 {0.12+strands*0.4}else{0.0}},
+                12 => if dy.abs()<radius*0.48 {0.2}else{0.0},
+                13 => noise(x as u32,y as u32,19).powf(2.0)*0.38,
+                14 => (0.1+noise(x as u32,y as u32,73)*0.3)*(1.0-d*d).max(0.0),
                 3 => noise(x as u32, y as u32, stroke.seed / 15).powf(1.8) * 0.7,
                 4 => (1.0 - d.clamp(0.0, 1.0) * 0.7) * 0.10,
                 6 => 0.11,
@@ -278,7 +297,17 @@ impl Engine {
             };
             let alpha = (strength * edge * texture).clamp(0.0, 1.0);
             let dst = pixels[idx];
-            if brush.kind == 5 {
+            if smudging {
+                let carried=sample_tip(stroke.smudge.as_ref().unwrap(),(dx/radius+1.0)*16.0-0.5,(dy/radius+1.0)*16.0-0.5);
+                let mask=match shape {
+                    2 | 4 => ((1.0-d*d).max(0.0)).powf(2.0),
+                    8 | 9 => {let hard=if shape==8{0.35}else{0.7};let t=((1.0-d)/(1.0-hard)).clamp(0.0,1.0);t*t*(3.0-2.0*t)},
+                    7 | 10 | 11 | 12 | 13 | 14 => texture.min(1.0)*edge,
+                    _=>edge,
+                };
+                let mixed=mix_rgba(dst,carried,(strength*mask*0.32).clamp(0.0,1.0));
+                pixels[idx]=if lock {(mixed&0xffffff)|(dst&0xff000000)}else{mixed};
+            } else if brush.kind == 5 {
                 if lock { continue; }
                 let a = channel(dst, 24) * (1.0 - alpha);
                 pixels[idx] = (dst & 0x00ffffff) | (((a * 255.0).round() as u32) << 24);
@@ -289,6 +318,9 @@ impl Engine {
                 }
             } else { pixels[idx] = composite(dst, color, alpha, "Normal"); }
         }}
+        if let (Some(tip),Some(pickup))=(&mut stroke.smudge,pickup){
+            for (carried,local) in tip.iter_mut().zip(pickup){*carried=mix_rgba(*carried,local,0.08);}
+        }
         stroke.seed = stroke.seed.wrapping_add(1);
         if x0 < x1 && y0 < y1 {
             stroke.rect[0]=stroke.rect[0].min(x0);stroke.rect[1]=stroke.rect[1].min(y0);
@@ -366,9 +398,12 @@ impl Engine {
     pub fn command(&mut self, v: &Value) -> Result<Value, String> {
         self.end();
         let op = v["op"].as_str().ok_or("Missing operation")?;
+        if self.flood_preview.is_some() && !matches!(op,"floodPreview"|"floodCommit"|"floodCancel"|"info"|"pick") {
+            self.cancel_flood();
+        }
         let index = v["index"].as_u64().unwrap_or(self.state.active as u64) as usize;
         let n = |key: &str, default: f32| finite(v[key].as_f64().unwrap_or(default as f64) as f32, default);
-        if self.state.layers[self.state.active].locked && matches!(op,"clear"|"fill"|"flood"|"adjust"|"transform"|"delete"|"merge") {
+        if self.state.layers[self.state.active].locked && matches!(op,"clear"|"fill"|"flood"|"floodPreview"|"adjust"|"transform"|"delete"|"merge") {
             return Err("This layer is locked. Swipe left and choose Unlock to edit it.".into());
         }
         if op=="merge" && self.state.active>0 && self.state.layers[self.state.active-1].locked {return Err("The layer below is locked".into());}
@@ -473,7 +508,15 @@ impl Engine {
                 return Ok(json!({"color":self.color_at(x, y, true)}));
             },
             "flood" => self.flood(n("x", 0.0) as i32, n("y", 0.0) as i32,
-                v["color"].as_u64().unwrap_or(0xff202020) as u32, n("threshold", 0.12))?,
+                v["color"].as_u64().unwrap_or(0xff202020) as u32, n("threshold", 0.12),true)?,
+            "floodPreview" => {
+                if self.flood_preview.is_none(){self.flood_preview=Some((self.state.active,self.state.layers[self.state.active].pixels.clone()));}
+                let (layer,before)=self.flood_preview.as_ref().unwrap();
+                self.state.layers[*layer].pixels=before.clone();
+                self.flood(n("x",0.0) as i32,n("y",0.0) as i32,v["color"].as_u64().unwrap_or(0xff202020) as u32,n("threshold",0.12),false)?;
+            },
+            "floodCommit" => {if let Some((layer,before))=self.flood_preview.take(){self.pixel_change(layer,before.as_ref().clone());}},
+            "floodCancel" => self.cancel_flood(),
             "deselect" => { self.selection = None; self.dirty = true; },
             "select" => {
                 let points: Vec<(f32,f32)> = v["points"].as_array().ok_or("Missing selection points")?.iter()
@@ -544,25 +587,34 @@ impl Engine {
         self.pixel_change(self.state.active,before);
     }
 
-    fn flood(&mut self,x:i32,y:i32,color:u32,threshold:f32)->Result<(),String> {
+    fn cancel_flood(&mut self){if let Some((layer,before))=self.flood_preview.take(){self.state.layers[layer].pixels=before;self.dirty=true;}}
+    fn flood(&mut self,x:i32,y:i32,color:u32,threshold:f32,record:bool)->Result<(),String> {
         if x<0 || y<0 || x>=self.width as i32 || y>=self.height as i32 { return Ok(()); }
         let start=y as usize*self.width+x as usize;
-        let before=self.state.layers[self.state.active].pixels.as_ref().clone();
+        let before=self.state.layers[self.state.active].pixels.clone();
         let target=before[start];
         let distance=|a:u32,b:u32| -> f32 {
-            [24,16,8,0].iter().map(|s|(channel(a,*s)-channel(b,*s)).abs()).fold(0.0,f32::max)
+            let aa=channel(a,24);let ba=channel(b,24);
+            [16,8,0].iter().map(|s|(channel(a,*s)*aa-channel(b,*s)*ba).abs()).fold((aa-ba).abs(),f32::max)
         };
         let l=&mut self.state.layers[self.state.active]; let lock=l.alpha_lock;
         let pixels=Arc::make_mut(&mut l.pixels); let mut seen=vec![false;pixels.len()]; let mut stack=vec![start];
+        let matches=|i:usize| !self.selection.as_ref().is_some_and(|s|!s[i]) && distance(before[i],target)<=threshold.clamp(0.0,1.0);
         while let Some(i)=stack.pop() {
-            if seen[i] {continue;} seen[i]=true;
-            if self.selection.as_ref().is_some_and(|s|!s[i]) || distance(before[i],target)>threshold.clamp(0.0,1.0) {continue;}
-            pixels[i]=if lock {(color&0x00ffffff)|(before[i]&0xff000000)} else {color};
-            let x=i%self.width; let y=i/self.width;
-            if x>0 && !seen[i-1] {stack.push(i-1);} if x+1<self.width && !seen[i+1] {stack.push(i+1);}
-            if y>0 && !seen[i-self.width] {stack.push(i-self.width);} if y+1<self.height && !seen[i+self.width] {stack.push(i+self.width);}
+            if seen[i] || !matches(i){continue;}
+            let row=i/self.width;let mut x=i%self.width;
+            while x>0 && !seen[row*self.width+x-1] && matches(row*self.width+x-1){x-=1;}
+            let mut above=false;let mut below=false;
+            while x<self.width {
+                let idx=row*self.width+x;if seen[idx]||!matches(idx){break;}
+                seen[idx]=true;pixels[idx]=if lock {(color&0xffffff)|(before[idx]&0xff000000)}else{color};
+                if row>0 {let n=idx-self.width;let ok=!seen[n]&&matches(n);if ok&&!above{stack.push(n);}above=ok;}
+                if row+1<self.height {let n=idx+self.width;let ok=!seen[n]&&matches(n);if ok&&!below{stack.push(n);}below=ok;}
+                x+=1;
+            }
         }
-        self.pixel_change(self.state.active,before); Ok(())
+        if record {self.pixel_change(self.state.active,before.as_ref().clone());}else{self.dirty=true;}
+        Ok(())
     }
 
     pub fn import(&mut self,width:usize,height:usize,pixels:&[u32])->Result<(),String> {
@@ -583,7 +635,7 @@ impl Engine {
         let doc=SavedDocument {version:1,width:self.width,height:self.height,active:self.state.active,
             dpi:self.dpi,background:self.state.background,background_visible:self.state.background_visible,
             layers:self.state.layers.iter().map(|l| SavedLayer {id:l.id,name:l.name.clone(),visible:l.visible,
-                opacity:l.opacity,blend:l.blend.clone(),alpha_lock:l.alpha_lock,locked:l.locked,clipping:l.clipping,runs:encode_runs(&l.pixels)}).collect()};
+                opacity:l.opacity,blend:l.blend.clone(),alpha_lock:l.alpha_lock,locked:l.locked,clipping:l.clipping,runs:encode_runs(if let Some((index,before))=&self.flood_preview {if self.state.layers[*index].id==l.id {before}else{&l.pixels}}else{&l.pixels})}).collect()};
         serde_json::to_vec(&doc).map_err(|e|e.to_string())
     }
     pub fn load(bytes:&[u8])->Result<Self,String> {
@@ -604,6 +656,20 @@ impl Engine {
         e.state=State{layers,active:doc.active,background:doc.background,background_visible:doc.background_visible};
         Ok(e)
     }
+}
+
+fn sample_tip(tip:&[u32],x:f32,y:f32)->u32 {
+    let x=x.clamp(0.0,31.0);let y=y.clamp(0.0,31.0);let ix=x as usize;let iy=y as usize;
+    let a=mix_rgba(tip[iy*32+ix],tip[iy*32+(ix+1).min(31)],x-ix as f32);
+    let b=mix_rgba(tip[(iy+1).min(31)*32+ix],tip[(iy+1).min(31)*32+(ix+1).min(31)],x-ix as f32);
+    mix_rgba(a,b,y-iy as f32)
+}
+
+fn mix_rgba(a:u32,b:u32,t:f32)->u32 {
+    let aa=channel(a,24)*(1.0-t);let ba=channel(b,24)*t;let alpha=aa+ba;
+    if alpha<0.00001{return 0;}
+    pack((channel(a,16)*aa+channel(b,16)*ba)/alpha,(channel(a,8)*aa+channel(b,8)*ba)/alpha,
+        (channel(a,0)*aa+channel(b,0)*ba)/alpha,alpha)
 }
 
 fn noise(x:u32,y:u32,seed:u32)->f32 {

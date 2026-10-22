@@ -114,6 +114,50 @@ class StudioTest {
         if(root is ViewGroup)for(i in 0 until root.childCount)named(root.getChildAt(i),description)?.let{return it}
         return null
     }
+    @Test fun airbrushAndSmudgeEngineRender(){
+        val controller=Robolectric.buildActivity(MainActivity::class.java).setup();val a=controller.get()
+        a.newCanvas(1000,600);val e=checkNotNull(a.editor);val session=checkNotNull(a.session)
+        session.stabilization=0f;session.pressureEnabled=false;session.color=0xff174f90.toInt()
+        for((row,name) in listOf("Soft Brush","Medium Brush","Medium Hard Brush","Hard Brush").withIndex()){
+            session.choose(brushPresets.first{it.name==name});session.size=80f
+            session.stroke(0,floatArrayOf(100f,90f+row*130,1f,0f))
+            session.stroke(1,floatArrayOf(400f,90f+row*130,1f,0f));session.stroke(2,floatArrayOf())
+        }
+        session.command("select",JSONObject().put("shape","Rectangle").put("points",JSONArray().put(JSONArray().put(570).put(80)).put(JSONArray().put(720).put(520))))
+        session.command("fill",JSONObject().put("color",0xffe04b42L));session.command("deselect")
+        session.command("select",JSONObject().put("shape","Rectangle").put("points",JSONArray().put(JSONArray().put(720).put(80)).put(JSONArray().put(870).put(520))))
+        session.command("fill",JSONObject().put("color",0xff2466c2L));session.command("deselect")
+        until{session.info.optInt("undo")==6};render(e,"brush-engine-before-smudge")
+        session.tool="Smudge";session.choose(brushPresets.first{it.name=="Soft Brush"});session.size=100f;session.flow=1f
+        session.stroke(0,floatArrayOf(680f,300f,1f,0f));session.stroke(1,floatArrayOf(790f,300f,1f,0f));session.stroke(2,floatArrayOf())
+        until{session.info.optInt("undo")==7};render(e,"brush-engine-after-smudge")
+        shutdown(controller)
+    }
+    @Test fun dragColorDropPreviewsCommitsAndCancels(){
+        val controller=Robolectric.buildActivity(MainActivity::class.java).setup();val a=controller.get()
+        a.newCanvas(320,240);val e=checkNotNull(a.editor);val session=checkNotNull(a.session)
+        session.command("fill",JSONObject().put("color",0xffffffffL));until{session.info.optInt("undo")==1}
+        render(e,"colordrop-before");session.color=0xffed5c40.toInt()
+        val color=checkNotNull(named(e,"Color"));val iconAt=IntArray(2);val own=IntArray(2)
+        color.getLocationInWindow(iconAt);e.getLocationInWindow(own)
+        fun touch(action:Int,x:Float,y:Float){val ev=MotionEvent.obtain(10,20,action,x-iconAt[0]+own[0],y-iconAt[1]+own[1],0);color.dispatchTouchEvent(ev);ev.recycle()}
+        fun down(){touch(MotionEvent.ACTION_DOWN,iconAt[0]-own[0]+color.width/2f,iconAt[1]-own[1]+color.height/2f)}
+        down();touch(MotionEvent.ACTION_MOVE,640f,400f)
+        shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(230))
+        until{session.bitmap.getPixel(160,120)==0xffed5c40.toInt()}
+        assertTrue(session.isStrokeActive);assertEquals(1,session.info.optInt("undo"))
+        render(e,"colordrop-threshold")
+        touch(MotionEvent.ACTION_MOVE,740f,400f);touch(MotionEvent.ACTION_UP,740f,400f)
+        until{session.info.optInt("undo")==2 && !session.isStrokeActive}
+        session.color=0xff2040ef.toInt();down();touch(MotionEvent.ACTION_MOVE,640f,400f)
+        shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(230))
+        until{session.bitmap.getPixel(160,120)==0xff2040ef.toInt()}
+        touch(MotionEvent.ACTION_CANCEL,640f,400f)
+        until{!session.isStrokeActive && session.bitmap.getPixel(160,120)==0xffed5c40.toInt()}
+        assertEquals(2,session.info.optInt("undo"));session.command("undo")
+        until{session.info.optInt("undo")==1 && session.bitmap.getPixel(160,120)==android.graphics.Color.WHITE}
+        render(e,"colordrop-undone");shutdown(controller)
+    }
     @Test fun heldShapeIsOneUndoStepAndCanvasResizeStaysStable(){
         val controller=Robolectric.buildActivity(MainActivity::class.java).setup();val a=controller.get();val e=checkNotNull(a.editor);val session=checkNotNull(a.session)
         render(e,"quick-shape-before")

@@ -195,3 +195,74 @@ fn canvas_dpi_and_old_documents_are_compatible() {
     let old=Engine::load(&serde_json::to_vec(&old).unwrap()).unwrap();
     assert_eq!(old.info()["dpi"],300);assert_eq!(old.info()["layers"][0]["locked"],false);
 }
+
+#[test]
+fn colordrop_preview_is_reversible_and_commits_one_undo() {
+    let mut e=Engine::new(32,32).unwrap();
+    let pixels=Arc::make_mut(&mut e.state.layers[0].pixels);
+    for y in 0..32 {for x in 0..32 {pixels[y*32+x]=if x<16 {0xffeeeeee}else{0xffcccccc};}}
+    let original=e.save().unwrap();
+    e.command(&json!({"op":"floodPreview","x":8,"y":8,"color":0xffff0000u32,"threshold":0.02})).unwrap();
+    assert_eq!(e.state.layers[0].pixels[8*32+8],0xffff0000);
+    assert_eq!(e.state.layers[0].pixels[8*32+24],0xffcccccc);
+    assert_eq!(e.undo.len(),0);assert_eq!(e.save().unwrap(),original);
+    e.command(&json!({"op":"floodPreview","x":8,"y":8,"color":0xffff0000u32,"threshold":0.3})).unwrap();
+    assert_eq!(e.state.layers[0].pixels[8*32+24],0xffff0000);
+    e.command(&json!({"op":"floodPreview","x":8,"y":8,"color":0xffff0000u32,"threshold":0.02})).unwrap();
+    assert_eq!(e.state.layers[0].pixels[8*32+24],0xffcccccc);
+    e.command(&json!({"op":"floodCancel"})).unwrap();assert_eq!(e.save().unwrap(),original);
+    e.command(&json!({"op":"floodPreview","x":8,"y":8,"color":0xff00ff00u32,"threshold":0.02})).unwrap();
+    e.command(&json!({"op":"floodCommit"})).unwrap();assert_eq!(e.undo.len(),1);
+    assert!(e.undo());assert_eq!(e.save().unwrap(),original);assert!(e.redo());
+    assert_eq!(e.state.layers[0].pixels[8*32+8],0xff00ff00);
+}
+
+#[test]
+fn airbrush_has_smooth_falloff_and_distinct_hardness() {
+    let mut soft=Engine::new(96,96).unwrap();let mut medium=Engine::new(96,96).unwrap();let mut hard=Engine::new(96,96).unwrap();
+    for (e,kind) in [(&mut soft,2),(&mut medium,8),(&mut hard,9)] {
+        e.begin(Sample{x:48.0,y:48.0,pressure:1.0,tilt:0.0},Brush{kind,size:64.0,pressure_size:0.0,..Brush::default()});e.end();
+    }
+    let alpha=|e:&Engine,x:usize|e.state.layers[0].pixels[48*96+x]>>24;
+    assert!(alpha(&soft,48)>alpha(&soft,60));assert!(alpha(&soft,60)>alpha(&soft,72));
+    assert!(alpha(&medium,65)>alpha(&soft,65));assert!(alpha(&hard,72)>alpha(&medium,72));
+    assert_eq!(alpha(&soft,81),0);
+}
+
+#[test]
+fn smudge_transports_a_multicolor_tip_without_using_active_color() {
+    let mut e=Engine::new(96,64).unwrap();
+    let pixels=Arc::make_mut(&mut e.state.layers[0].pixels);
+    for y in 0..64 {for x in 0..96 {pixels[y*96+x]=if x<48 {if y<32{0xffff0000}else{0xff00ff00}}else{0xff0000ff};}}
+    let original=e.save().unwrap();
+    e.begin(Sample{x:40.0,y:32.0,pressure:1.0,tilt:0.0},Brush{kind:128+2,size:28.0,color:0xffffffff,pressure_size:0.0,stabilization:0.0,..Brush::default()});
+    assert_eq!(e.save().unwrap(),original,"initial pickup must not paint");
+    e.sample(Sample{x:60.0,y:32.0,pressure:1.0,tilt:0.0});e.end();
+    let upper=e.state.layers[0].pixels[27*96+53];let lower=e.state.layers[0].pixels[37*96+53];
+    assert!(channel(upper,16)>channel(upper,8));assert!(channel(lower,8)>channel(lower,16));
+    assert!(channel(upper,0)>0.0 && channel(upper,16)>0.0);
+    assert_ne!(upper,0xffffffff);assert!(e.undo());assert_eq!(e.save().unwrap(),original);
+}
+
+#[test]
+fn colordrop_treats_hidden_rgb_as_transparent_and_respects_locks(){
+    let mut e=Engine::new(32,32).unwrap();
+    Arc::make_mut(&mut e.state.layers[0].pixels)[16*32+16]=0x00ff0000;
+    e.command(&json!({"op":"floodPreview","x":16,"y":16,"threshold":0.0,"color":0xff3050a0u32})).unwrap();
+    assert!(e.state.layers[0].pixels.iter().all(|p|*p==0xff3050a0));
+    e.command(&json!({"op":"floodCancel"})).unwrap();
+    e.command(&json!({"op":"layer","locked":true})).unwrap();
+    let saved=e.save().unwrap();
+    assert!(e.command(&json!({"op":"floodPreview","x":16,"y":16,"color":0xff3050a0u32})).is_err());
+    assert_eq!(saved,e.save().unwrap());
+}
+
+#[test]
+fn colordrop_stays_inside_a_closed_outline(){
+    let mut e=Engine::new(40,40).unwrap();let data=Arc::make_mut(&mut e.state.layers[0].pixels);
+    for i in 8..32 {data[8*40+i]=0xff000000;data[31*40+i]=0xff000000;data[i*40+8]=0xff000000;data[i*40+31]=0xff000000;}
+    e.command(&json!({"op":"floodPreview","x":20,"y":20,"threshold":0.12,"color":0xffeb5b40u32})).unwrap();
+    assert_eq!(e.state.layers[0].pixels[20*40+20],0xffeb5b40);
+    assert_eq!(e.state.layers[0].pixels[4*40+4],0);assert_eq!(e.state.layers[0].pixels[8*40+20],0xff000000);
+    e.command(&json!({"op":"floodCommit"})).unwrap();assert_eq!(e.undo.len(),1);
+}
