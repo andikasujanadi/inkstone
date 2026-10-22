@@ -4,8 +4,6 @@ Inkstone aims to bring the Procreate drawing experience to Android, starting wit
 
 **Early development:** this is a work in progress. Features are incomplete, bugs are expected, and many improvements and updates are still ahead. Feedback from real devices helps guide each release.
 
-**Status: early functional preview. This is not a complete or pixel-verified 1:1 reproduction of Procreate.** The first hardware target is Xiaomi Pad 7 with its original pen. The user reported serious stroke lag and interruptions on Xiaomi Pad 7 in 0.1.1. Version 0.1.4 includes the save/render fixes from 0.1.2 and needs hardware retesting.
-
 Inkstone is independent and is not affiliated with Savage Interactive. It contains original code, vector icons, and procedural brush presets. It does not include Procreate's source, artwork, brush assets, name, or file-format implementation.
 
 ![Tablet editor](artifacts/editor-tablet.png)
