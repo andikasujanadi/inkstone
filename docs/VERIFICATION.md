@@ -5,7 +5,7 @@ Version 0.1.4, package `art.inkstone.preview`.
 - Rust engine: 21 tests passed, zero failures.
 - Android integration: 14 Robolectric tests passed against SDK 35 with native graphics and the real host Rust JNI library.
 - Tested document round trips, native library calls, finger input and cancellation, saved gallery thumbnails, tablet and phone panels, invalid document rejection, and displayed color values.
-- Actual Android View renderings are in `artifacts/`. They are desktop framework renders, not device screenshots.
+- `artifacts/editor-tablet.png` is the user-supplied device screenshot used in the README. Other Android View renders in `artifacts/` are desktop framework renders. The tablet rendering test writes `editor-tablet-framework.png` to preserve the supplied screenshot.
 - Android lint: zero errors, 49 warnings, mainly draw allocations, fixed layout direction, and platform metadata. These remain follow-up work.
 - Debug APK assembled and APK v2 signature verified. ARM64 and x86-64 libraries include all eleven JNI entry points and 16 KB-aligned ELF load segments.
 - APK size: 2,193,332 bytes. SHA-256: `fbb9b2b3554e0973d03a2f72cc2a8044efa53cd953a389b4d7ead86316c2b6a3`.

@@ -87,7 +87,7 @@ class StudioTest {
         val controller=Robolectric.buildActivity(MainActivity::class.java).setup();val activity=controller.get()
         activity.newCanvas(1600,1200)
         val s=checkNotNull(activity.session);val editor=checkNotNull(activity.editor)
-        landscape(s);render(editor,"editor-tablet")
+        landscape(s);render(editor,"editor-tablet-framework")
         click(editor,"Paint");render(editor,"brush-library")
         click(editor,"Airbrushing");click(editor,"Soft Brush, Airbrushing");render(editor,"brush-library-airbrushing")
         editor.dismissPanel();click(editor,"Color");render(editor,"colors")
