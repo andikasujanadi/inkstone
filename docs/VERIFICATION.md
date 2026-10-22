@@ -30,7 +30,7 @@ Swipe actions now use View clip bounds updated on every animation frame instead 
 
 The user tested 0.1.1 on Xiaomi Pad 7 and reported interrupted strokes and severe lag. Version 0.1.2 fixes the identified save/render bottlenecks and awaits a repeat hardware test. See PERFORMANCE.md. Installation, pen pressure calibration, palm rejection, hover, side buttons, sustained latency, device rotation and large-document memory behavior still need hardware checks. The engine currently rasterizes and composites on the CPU. This preview is not complete Procreate parity; see PARITY.md.
 
-GitHub Actions has been prepared but has not run remotely. The source has not been published to GitHub.
+Source is published at https://github.com/bramastahartono20/inkstone. GitHub Actions runs on pushes; consult the Actions page for current remote verification. The test counts above describe the verified local build.
 
 ## Local test environment
 

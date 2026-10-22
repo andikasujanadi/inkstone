@@ -1,4 +1,4 @@
-# Inkstone — Procreate-style painting for Android
+# Inkstone — The Procreate experience, built for Android
 
 Inkstone aims to bring the Procreate drawing experience to Android, starting with tablets and pressure-sensitive pens. It combines a native Android interface with a Rust drawing engine.
 
@@ -14,7 +14,7 @@ See [verified checks and remaining device tests](docs/VERIFICATION.md).
 
 ## Try the Android app
 
-Install the debug APK from this repository's build artifacts or a release uploaded by its maintainer. Enable installation from the app used to open the APK when Android asks.
+Download the APK from [GitHub Releases](https://github.com/bramastahartono20/inkstone/releases). Version 0.1.4 is an early-development preview. Enable installation from the app used to open the APK when Android asks.
 
 - Android 8.0 / API 26 or later.
 - ARM64 Android tablets and phones; x86-64 builds are included for testing.
@@ -96,7 +96,7 @@ cd android
 
 The Robolectric tests load the real Rust JNI library compiled for the build host. They exercise document round-trips, input cancellation, gallery saving, tool panels, and tablet/phone layout rendering. Their PNG outputs go into `artifacts/`. These are desktop Android-framework tests; they do not establish physical stylus behavior or device GPU performance.
 
-The GitHub Actions workflow builds the native libraries, runs the tests, and uploads the debug APK and verification artifacts. It does not publish a release automatically. This workflow has not been run on GitHub yet.
+The GitHub Actions workflow builds the native libraries, runs the tests, and uploads the debug APK and verification artifacts. It does not publish a release automatically. Check [GitHub Actions](https://github.com/bramastahartono20/inkstone/actions) for the current build status.
 
 ## Architecture
 
