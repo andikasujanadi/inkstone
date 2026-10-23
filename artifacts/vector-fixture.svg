@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="240px" height="180px" viewBox="0 0 240 180" color-interpolation="sRGB">
+<g id="background" display="none"><rect width="240" height="180" fill="#ffffff" fill-opacity="1.0"/></g>
+<g id="layer-1" opacity="1.0"><title>Paths &amp; 底层</title>
+<path d="M20.0 30.0 C20.0 30.0 25.0 27.5 35.0 22.5 C45.0 17.5 55.833332 22.5 67.5 37.5 C79.166664 52.5 92.5 55.0 107.5 45.0 C115.0 40.0 122.5 35.0 130.0 30.0" id="object-2" transform="matrix(1.0 0.0 0.0 1.0 0.0 0.0)" stroke="#285c9d" stroke-opacity="1.0" stroke-width="5.0" stroke-linecap="round" stroke-linejoin="round" fill="none" fill-opacity="1.0"/>
+<rect x="30.0" y="70.0" width="80.0" height="65.0" id="object-3" transform="matrix(0.9781476 -0.2079117 0.2079117 0.9781476 -19.261503 16.739056)" stroke="#31445a" stroke-opacity="1.0" stroke-width="3.0" stroke-linecap="round" stroke-linejoin="round" fill="#ef9250" fill-opacity="0.5647059"/>
+</g>
+<g id="layer-4" opacity="0.6"><title>Shapes &lt;top&gt;</title>
+<ellipse cx="157.5" cy="102.5" rx="47.5" ry="42.5" id="object-5" transform="matrix(1.1 0.0 0.0 0.8 -15.0 20.0)" stroke="#2a7669" stroke-opacity="1.0" stroke-width="4.0" stroke-linecap="round" stroke-linejoin="round" fill="#6eb6a4" fill-opacity="0.6901961"/>
+<path d="M120.0 25.0 L210.0 50.0" id="object-6" transform="matrix(1.0 0.0 0.0 1.0 0.0 0.0)" stroke="#bd5267" stroke-opacity="1.0" stroke-width="7.0" stroke-linecap="round" stroke-linejoin="round" fill="none" fill-opacity="1.0"/>
+</g>
+</svg>

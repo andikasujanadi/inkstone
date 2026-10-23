@@ -41,5 +41,14 @@ internal object StudioMotion {
         view.animate().cancel();view.scaleX=.94f;view.scaleY=.94f
         view.animate().scaleX(1f).scaleY(1f).setDuration(460).setInterpolator(android.view.animation.OvershootInterpolator(1.4f)).start()
     }
+    fun canvasEnter(view:View){
+        if(!ValueAnimator.areAnimatorsEnabled())return
+        view.alpha=0f;view.scaleX=.985f;view.scaleY=.985f
+        view.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(280).setInterpolator(ease).start()
+    }
+    fun canvasExit(view:View,done:()->Unit){
+        if(!ValueAnimator.areAnimatorsEnabled()){done();return}
+        view.animate().cancel();view.animate().alpha(0f).scaleX(.985f).scaleY(.985f).setDuration(180).setInterpolator(ease).withEndAction(done).start()
+    }
     private fun reset(v:View){v.alpha=1f;v.scaleX=1f;v.scaleY=1f;v.translationX=0f;v.translationY=0f}
 }

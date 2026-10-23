@@ -12,8 +12,10 @@ object NativeBridge {
     external fun render(handle: Long, pixels: ByteBuffer, background: Boolean): Boolean
     external fun renderPatch(handle: Long, force: Boolean): IntArray?
     external fun preview(handle: Long): IntArray?
+    external fun writePsd(handle: Long, path: String): String
     external fun save(handle: Long): ByteArray?
     external fun load(handle: Long, bytes: ByteArray): String
     external fun importPixels(handle: Long, width: Int, height: Int, pixels: IntArray): String
+    external fun transformSnapshot(handle:Long):IntArray?
     external fun thumbnails(handle: Long, size: Int): IntArray?
 }

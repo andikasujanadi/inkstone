@@ -31,8 +31,11 @@ class PaintCanvas(context: Context, val session: DrawingSession) : View(context)
     private var hover: PointF? = null
     private val selectionPoints = mutableListOf<PointF>()
     private var selectionPath: Path? = null
-    private var transformStart: PointF? = null
-    private var transformDelta = PointF()
+    internal val rasterTransform=RasterTransform(this,session)
+    internal val transformZoom get()=zoom
+    internal fun transformDocumentPoint(x:Float,y:Float)=documentPoint(x,y)
+    internal fun transformViewPoint(x:Float,y:Float):PointF{updateMatrix();val p=floatArrayOf(x,y);transform.mapPoints(p);return PointF(p[0],p[1])}
+    internal fun syncTransformTool(){if(session.tool=="Transform")rasterTransform.ensure()else rasterTransform.finish()}
     private var picking = false
     private var pickPoint: PointF? = null
     var selectionShape = "Freehand"
@@ -109,6 +112,7 @@ class PaintCanvas(context: Context, val session: DrawingSession) : View(context)
         fillCenter=point;fillAmount=0f;fillWaiting=fillBefore!=null
     }
     fun onRenderedFrame(){
+        rasterTransform.onFrame()
         if(fillWaiting){fillWaiting=false;fillAnimator=android.animation.ValueAnimator.ofFloat(0f,1f).apply{
             duration=420;interpolator=android.view.animation.DecelerateInterpolator()
             addUpdateListener{fillAmount=it.animatedValue as Float;invalidate()}
@@ -118,7 +122,7 @@ class PaintCanvas(context: Context, val session: DrawingSession) : View(context)
     }
     fun cancelFillAnimation(){fillAnimator?.cancel();fillAnimator=null;fillBefore?.recycle();fillBefore=null;fillWaiting=false;fillAmount=1f;invalidate()}
     override fun onDraw(canvas: Canvas) {
-        canvas.drawColor(if (session.lightInterface) 0xffb5b5b5.toInt() else 0xff292929.toInt())
+        canvas.drawColor(if (session.lightInterface) 0xffb5b5b5.toInt() else StudioColors.workspace)
         paint.style=Paint.Style.STROKE;paint.strokeWidth=dp*.65f
         paint.color=if(session.lightInterface)0x14000000 else 0x10ffffff
         val spacing=16*dp
@@ -141,14 +145,14 @@ class PaintCanvas(context: Context, val session: DrawingSession) : View(context)
         val fillSave=canvas.save()
         if(fillBefore!=null){val radius=hypot(max(fillCenter.x,w-fillCenter.x),max(fillCenter.y,h-fillCenter.y))*fillAmount
             canvas.clipPath(Path().apply{addCircle(fillCenter.x,fillCenter.y,radius,Path.Direction.CW)})}
-        canvas.drawBitmap(session.bitmap, 0f, 0f, paint)
+        if(!rasterTransform.draw(canvas))canvas.drawBitmap(session.bitmap, 0f, 0f, paint)
         canvas.restoreToCount(fillSave)
         if (session.guide) {
             paint.color = 0x554a92cc; paint.strokeWidth = 1f / zoom
             var x = 0f; while (x <= w) { canvas.drawLine(x, 0f, x, h, paint); x += 80f }
             var y = 0f; while (y <= h) { canvas.drawLine(0f, y, w, y, paint); y += 80f }
         }
-        if (selectionPath != null) {
+        if (selectionPath != null && !rasterTransform.displaying) {
             paint.color=Color.argb((session.selectionVisibility*255).toInt(),70,90,100)
             paint.style=Paint.Style.FILL;canvas.drawPath(selectionPath!!,paint)
             paint.style = Paint.Style.STROKE; paint.strokeWidth = 1.2f * dp / zoom
@@ -157,15 +161,7 @@ class PaintCanvas(context: Context, val session: DrawingSession) : View(context)
             paint.color = Color.BLACK; paint.pathEffect = DashPathEffect(floatArrayOf(5 * dp / zoom, 5 * dp / zoom), 5 * dp / zoom)
             canvas.drawPath(selectionPath!!, paint); paint.pathEffect = null; paint.style = Paint.Style.FILL
         }
-        if (session.tool == "Transform") {
-            paint.style = Paint.Style.STROKE; paint.color = 0xff0a84ff.toInt(); paint.strokeWidth = dp / zoom
-            paint.pathEffect = DashPathEffect(floatArrayOf(6 * dp / zoom, 4 * dp / zoom), 0f)
-            val rect = RectF(transformDelta.x, transformDelta.y, w + transformDelta.x, h + transformDelta.y)
-            canvas.drawRect(rect, paint); paint.pathEffect = null; paint.style = Paint.Style.FILL
-            for (x in listOf(rect.left, rect.centerX(), rect.right)) for (y in listOf(rect.top, rect.bottom)) {
-                canvas.drawCircle(x, y, 4 * dp / zoom, paint)
-            }
-        }
+        if(session.tool=="Transform")rasterTransform.drawHandles(canvas)
         canvas.restore()
         if (hover != null && session.cursor) {
             paint.style = Paint.Style.STROKE; paint.strokeWidth = dp
@@ -231,7 +227,13 @@ class PaintCanvas(context: Context, val session: DrawingSession) : View(context)
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        val hasPen=(0 until event.pointerCount).any{event.getToolType(it) in listOf(MotionEvent.TOOL_TYPE_STYLUS,MotionEvent.TOOL_TYPE_ERASER)}
+        if(session.penOnly && !hasPen && event.actionMasked!=MotionEvent.ACTION_CANCEL)return true
         parent.requestDisallowInterceptTouchEvent(true)
+        if(session.tool=="Transform"){
+            if(event.actionMasked==MotionEvent.ACTION_DOWN){requestFocus();if(onDismissPanel())return true;onInputDevice(event);if(session.info.getJSONArray("layers").getJSONObject(session.info.getInt("active")).optBoolean("locked")){onGesture("Layer is locked");return true}}
+            return rasterTransform.touch(event)
+        }
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 removeCallbacks(shapeHold);shapePoints.clear();snapped=false;holdX=event.x;holdY=event.y
@@ -244,7 +246,6 @@ class PaintCanvas(context: Context, val session: DrawingSession) : View(context)
                 if(session.info.getJSONArray("layers").getJSONObject(session.info.getInt("active")).optBoolean("locked") && session.tool in listOf("Paint","Smudge","Erase","Fill","Transform")){onGesture("Layer is locked");return true}
                 when (session.tool) {
                     "Select" -> { selectionPoints.clear(); selectionPoints.add(documentPoint(event.x, event.y)); updateSelectionPath() }
-                    "Transform" -> { transformStart = documentPoint(event.x, event.y); transformDelta = PointF() }
                     "Eyedropper" -> { picking = true; pick(event.x, event.y) }
                     "Fill" -> { val p = documentPoint(event.x, event.y); session.command("flood", JSONObject().put("x", p.x).put("y", p.y).put("color", session.color.toLong() and 0xffffffffL)); onChanged() }
                     else -> {
@@ -271,7 +272,6 @@ class PaintCanvas(context: Context, val session: DrawingSession) : View(context)
                 when {
                     picking -> pick(x, y)
                     session.tool == "Select" -> { selectionPoints.add(documentPoint(x, y)); updateSelectionPath() }
-                    session.tool == "Transform" -> transformStart?.let { val p = documentPoint(x, y); transformDelta = PointF(p.x - it.x, p.y - it.y); invalidate() }
                     drawing && !snapped -> {val samples=strokeSamples(event,index,true);session.stroke(1,samples,event.getToolType(index)==MotionEvent.TOOL_TYPE_ERASER || (session.penButtonErase && event.isButtonPressed(MotionEvent.BUTTON_STYLUS_PRIMARY)));recordShape(samples,x,y)}
                 }
             }
@@ -298,10 +298,6 @@ class PaintCanvas(context: Context, val session: DrawingSession) : View(context)
                         val points = JSONArray(); selectionPoints.forEach { points.put(JSONArray().put(it.x).put(it.y)) }
                         session.command("select", JSONObject().put("shape", selectionShape).put("points", points)); onChanged()
                     }
-                    session.tool == "Transform" -> {
-                        session.command("transform", JSONObject().put("dx", transformDelta.x).put("dy", transformDelta.y))
-                        transformStart = null; transformDelta = PointF(); deselect(); onChanged()
-                    }
                     drawing -> { session.stroke(2, if(snapped)floatArrayOf() else strokeSamples(event, 0, false), event.getToolType(0) == MotionEvent.TOOL_TYPE_ERASER || (session.penButtonErase && event.isButtonPressed(MotionEvent.BUTTON_STYLUS_PRIMARY))); onChanged() }
                 }
                 drawing = false; activePointer = -1; multi = false; pickPoint = null; invalidate(); performClick()
@@ -325,5 +321,6 @@ class PaintCanvas(context: Context, val session: DrawingSession) : View(context)
             }
         }; invalidate()
     }
+    override fun onDetachedFromWindow(){rasterTransform.dispose();super.onDetachedFromWindow()}
     override fun performClick(): Boolean { super.performClick(); return true }
 }

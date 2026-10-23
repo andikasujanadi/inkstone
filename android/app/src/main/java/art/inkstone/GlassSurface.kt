@@ -12,9 +12,9 @@ internal class GlassSurface(source:View,private val panelX:Float,private val pan
     private val scale=.16f
     private val image:Bitmap
     init{
-        val w=max(1,(source.width*scale).roundToInt());val h=max(1,((source.height+source.top)*scale).roundToInt())
+        val w=max(1,((source.width+source.left)*scale).roundToInt());val h=max(1,((source.height+source.top)*scale).roundToInt())
         image=Bitmap.createBitmap(w,h,Bitmap.Config.ARGB_8888)
-        val canvas=Canvas(image);canvas.drawColor(0xff292929.toInt());canvas.scale(scale,scale);canvas.translate(0f,source.top.toFloat());source.draw(canvas)
+        val canvas=Canvas(image);canvas.drawColor(StudioColors.workspace);canvas.scale(scale,scale);canvas.translate(source.left.toFloat(),source.top.toFloat());source.draw(canvas)
         val pixels=IntArray(w*h);val temp=IntArray(w*h);image.getPixels(pixels,0,w,0,0,w,h)
         val r=5
         for(pass in 0..1){
@@ -36,7 +36,7 @@ internal class GlassSurface(source:View,private val panelX:Float,private val pan
         val save=c.save();val path=Path().apply{addRoundRect(rect,radius,radius,Path.Direction.CW)};c.clipPath(path)
         val imageSave=c.save();c.translate(-panelX,-panelY);c.scale(1/scale,1/scale)
         paint.color=Color.WHITE;paint.alpha=255;c.drawBitmap(image,0f,0f,paint);c.restoreToCount(imageSave)
-        paint.color=0xe51e1e1e.toInt();c.drawRect(rect,paint);c.restoreToCount(save)
+        paint.color=StudioColors.glass;c.drawRect(rect,paint);c.restoreToCount(save)
     }
     override fun setAlpha(alpha:Int){}
     override fun setColorFilter(filter:ColorFilter?){}

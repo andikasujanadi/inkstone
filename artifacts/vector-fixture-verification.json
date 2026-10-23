@@ -1,0 +1,26 @@
+{
+  "passed": true,
+  "svg_renderer": "resvg-py",
+  "psd_reader": "psd-tools",
+  "svg_contains_embedded_images": false,
+  "dimensions": [
+    240,
+    180
+  ],
+  "svg_2x_dimensions": [
+    480,
+    360
+  ],
+  "svg_native_premultiplied_mean_error": [
+    0.3707638888888889,
+    0.36277777777777775,
+    0.2899305555555556,
+    0.4814351851851852
+  ],
+  "psd_layers": [
+    "Background colour",
+    "Paths & \u5e95\u5c42",
+    "Shapes <top>"
+  ],
+  "photoshop_desktop_tested": false
+}

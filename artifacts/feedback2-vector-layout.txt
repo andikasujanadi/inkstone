@@ -1,0 +1,26 @@
+VectorEditorView null 0,0 1280x800 alpha=1.0
+ VectorCanvas Vector drawing canvas 44,44 1236x756 alpha=1.0
+ LinearLayout null 0,0 1280x44 alpha=1.0
+  LinearLayout null 0,0 364x44 alpha=1.0
+   TextView Gallery 0,0 84x44 alpha=1.0 text=Gallery lines=1
+   ToolIcon Actions 84,0 40x44 alpha=1.0
+   ToolIcon Pen 124,0 40x44 alpha=1.0
+   ToolIcon Line 164,0 40x44 alpha=1.0
+   ToolIcon Rectangle 204,0 40x44 alpha=1.0
+   ToolIcon Ellipse 244,0 40x44 alpha=1.0
+   ToolIcon Nodes 284,0 40x44 alpha=1.0
+   ToolIcon Select 324,0 40x44 alpha=1.0
+  View null 364,0 339x1 alpha=1.0
+  LinearLayout History and save 703,0 142x44 alpha=1.0
+   ToolIcon Undo 0,0 44x44 alpha=1.0
+   ToolIcon Redo 44,0 44x44 alpha=1.0
+   TextView Save 88,0 54x44 alpha=1.0 text=Save lines=1
+  View null 845,0 339x1 alpha=1.0
+  LinearLayout null 1184,0 96x44 alpha=1.0
+   ToolIcon Layers 0,0 48x44 alpha=1.0
+   ToolIcon Colors 48,0 48x44 alpha=1.0
+ LinearLayout Vector side controls 0,44 44x756 alpha=1.0
+  VerticalSlider Vector stroke width 6,10 32x346 alpha=1.0
+  ToolIcon Vector colors 2,356 40x44 alpha=1.0
+  VerticalSlider Vector opacity 6,400 32x346 alpha=1.0
+ BrushHud Brush preview. Tap to remember this slider position. 0,0 160x160 alpha=1.0

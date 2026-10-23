@@ -14,11 +14,11 @@ class GalleryView(private val activity: MainActivity) : LinearLayout(activity) {
     private fun dp(v:Int)=(v*density).roundToInt()
     private var selecting=false
     private val selected=mutableSetOf<String>()
-    private val blue=0xff0a84ff.toInt()
+    private val blue=StudioColors.accent
     private fun label(text:String,size:Float=15f,color:Int=Color.WHITE)=TextView(activity).apply{
         this.text=text;textSize=size;setTextColor(color);gravity=Gravity.CENTER_VERTICAL;setPadding(dp(12),0,dp(12),0)
     }
-    init {orientation=VERTICAL;setBackgroundColor(0xff242424.toInt());rebuild()}
+    init {orientation=VERTICAL;setBackgroundColor(StudioColors.surface);rebuild()}
     private fun rebuild(){
         removeAllViews()
         val narrow=resources.displayMetrics.widthPixels/density<600
@@ -54,7 +54,7 @@ class GalleryView(private val activity: MainActivity) : LinearLayout(activity) {
             }
         }
         scroll.addView(content);addView(scroll,LayoutParams(-1,0,1f))
-        if(selecting){val bottom=LinearLayout(activity).apply{gravity=Gravity.CENTER;setBackgroundColor(0xff242424.toInt())}
+        if(selecting){val bottom=LinearLayout(activity).apply{gravity=Gravity.CENTER;setBackgroundColor(StudioColors.surface)}
             bottom.addView(label("${selected.size} selected",14f,0xffbbbbbb.toInt()),LayoutParams(0,dp(60),1f))
             bottom.addView(label("Duplicate",15f,blue).apply{isFocusable=true;setOnClickListener{
                 val ids=selected.toList();activity.io.execute{val result=runCatching{ids.forEach{activity.store.duplicate(it)}};activity.runOnUiThread{result.onFailure{activity.message(it.message?:"Could not duplicate")};selected.clear();rebuild()}}
@@ -73,7 +73,7 @@ class GalleryView(private val activity: MainActivity) : LinearLayout(activity) {
         if(art.id in selected)frame.addView(label("✓",22f,blue).apply{gravity=Gravity.RIGHT or Gravity.TOP},FrameLayout.LayoutParams(-1,dp(40)))
         card.addView(frame,LayoutParams(-1,dp((widthDp*.72f).toInt())))
         card.addView(label(art.name,14f).apply{setPadding(dp(2),0,dp(2),0);maxLines=1;ellipsize=android.text.TextUtils.TruncateAt.END},LayoutParams(-1,dp(32)))
-        card.addView(label("${art.width} × ${art.height}px",11f,0xff999999.toInt()).apply{setPadding(dp(2),0,0,0)},LayoutParams(-1,dp(18)))
+        card.addView(label("${art.width} × ${art.height}px${if(art.mode=="vector")" · Vector" else ""}",11f,0xff999999.toInt()).apply{setPadding(dp(2),0,0,0)},LayoutParams(-1,dp(18)))
         card.setOnClickListener{if(selecting){if(!selected.add(art.id))selected.remove(art.id);rebuild()}else activity.openArtwork(art)}
         card.setOnLongClickListener{
             AlertDialog.Builder(activity).setTitle(art.name).setItems(arrayOf("Rename","Duplicate","Delete")){_,which->

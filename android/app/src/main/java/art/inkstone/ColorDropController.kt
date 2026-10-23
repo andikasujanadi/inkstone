@@ -28,12 +28,13 @@ internal class ColorDropController(
                 p.style=Paint.Style.FILL;p.color=0xee171717.toInt();c.drawRoundRect(left-14*d,top,right+14*d,top+57*d,12*d,12*d,p)
                 p.color=Color.WHITE;p.textSize=14*d;p.textAlign=Paint.Align.CENTER;c.drawText("ColorDrop Threshold ${(threshold*100).roundToInt()}%",width/2f,top+23*d,p)
                 p.color=0xff555555.toInt();c.drawRoundRect(left,top+36*d,right,top+40*d,2*d,2*d,p)
-                p.color=0xff008aff.toInt();c.drawRoundRect(left,top+36*d,left+(right-left)*threshold,top+40*d,2*d,2*d,p)
+                p.color=StudioColors.accent;c.drawRoundRect(left,top+36*d,left+(right-left)*threshold,top+40*d,2*d,2*d,p)
             }
         }
     }.apply{isClickable=false;importantForAccessibility=View.IMPORTANT_FOR_ACCESSIBILITY_NO}
     init{root.addView(overlay,FrameLayout.LayoutParams(-1,-1))}
     fun bind(control:View,tap:()->Unit){control.setOnTouchListener{_,event->
+        if(session.penOnly && event.getToolType(0) !in listOf(MotionEvent.TOOL_TYPE_STYLUS,MotionEvent.TOOL_TYPE_ERASER))return@setOnTouchListener false
         val at=IntArray(2);val own=IntArray(2);control.getLocationInWindow(at);root.getLocationInWindow(own)
         x=at[0]-own[0]+event.x;y=at[1]-own[1]+event.y
         when(event.actionMasked){

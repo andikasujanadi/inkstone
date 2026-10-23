@@ -1,7 +1,9 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::sync::Arc;
+mod transform;
 mod gpu;
+mod psd;
 
 const MAX_PIXELS: usize = 16_777_216;
 const PIXEL_BUDGET: usize = 67_108_864;
@@ -66,7 +68,14 @@ impl Default for Brush {
     }
 }
 
-struct Stroke { rect: [usize; 4], before: Vec<u32>, layer: usize, last: Sample, filtered: Sample, brush: Brush, seed: u32, smudge: Option<Vec<u32>>, pending: Vec<gpu::Dab>, gpu_paint: bool }
+fn brush_shape(kind:u8)->u8 {
+    if kind>=128 {kind&127} else if (64..=78).contains(&kind) {kind-64} else if kind==6 {2} else {kind}
+}
+fn dab_spacing(brush: Brush) -> f32 {
+    (brush.size * if matches!(brush_shape(brush.kind), 2 | 4 | 8 | 9) { 0.035 } else { 0.055 }).max(0.65)
+}
+
+struct Stroke { rect: [usize; 4], before: Vec<u32>, layer: usize, last: Sample, filtered: Sample, brush: Brush, seed: u32, smudge: Option<Vec<u32>>, pending: Vec<gpu::Dab>, gpu_paint: bool, distance_to_dab: f32 }
 
 pub struct Engine {
     gpu: Option<gpu::Gpu>,
@@ -217,7 +226,7 @@ impl Engine {
         brush.pressure_opacity = finite(brush.pressure_opacity, 0.0).clamp(0.0, 1.0);
         if brush.kind == 6 || brush.kind>=128 { brush.color = 0; }
         let mut stroke = Stroke { rect: [self.width,self.height,0,0], before: self.state.layers[self.state.active].pixels.as_ref().clone(),
-            layer: self.state.active, last: p, filtered: p, brush, seed: 0x736561, smudge: None, pending: Vec::new(), gpu_paint: brush.size>=32.0 };
+            layer: self.state.active, last: p, filtered: p, brush, seed: 0x736561, smudge: None, pending: Vec::new(), gpu_paint: brush.size>=32.0, distance_to_dab: dab_spacing(brush) };
         if stroke.gpu_paint { if let Some(gpu)=&mut self.gpu { gpu.selection(self.selection.as_deref()); } }
         self.stamp(p, &mut stroke);
         self.stroke = Some(stroke);
@@ -232,13 +241,17 @@ impl Engine {
             stroke.filtered = p;
             let a = stroke.last;
             let distance = (p.x - a.x).hypot(p.y - a.y);
-            let spacing = (stroke.brush.size * 0.055).max(0.65);
-            let steps = (distance / spacing).ceil().clamp(1.0, 8192.0) as usize;
-            for i in 1..=steps {
-                let t = i as f32 / steps as f32;
+            // Preserve spacing across input batches: stationary/high-frequency events add no ink.
+            let spacing = dab_spacing(stroke.brush);
+            let mut travel = stroke.distance_to_dab;
+            let mut count = 0;
+            while distance > 0.0001 && travel <= distance && count < 8192 {
+                let t = travel / distance;
                 self.stamp(Sample { x: a.x + (p.x - a.x) * t, y: a.y + (p.y - a.y) * t,
-                    pressure: a.pressure + (p.pressure - a.pressure) * t, tilt: p.tilt }, &mut stroke);
+                    pressure: a.pressure + (p.pressure - a.pressure) * t, tilt: a.tilt + (p.tilt-a.tilt)*t }, &mut stroke);
+                travel += spacing; count += 1;
             }
+            stroke.distance_to_dab = (travel-distance).max(0.0001);
             stroke.last = p;
             self.stroke = Some(stroke);
         }
@@ -249,7 +262,7 @@ impl Engine {
         let brush = stroke.brush;
         let pressure = finite(p.pressure, 1.0).clamp(0.0, 1.0).powf(0.7);
         let mut radius = brush.size * 0.5 * (1.0 - brush.pressure_size + brush.pressure_size * pressure).max(0.08);
-        if brush.kind == 1 || brush.kind == 3 { radius *= 1.0 + finite(p.tilt, 0.0).clamp(0.0, 1.57) * 0.7; }
+        if matches!(brush_shape(brush.kind), 1 | 3) { radius *= 1.0 + finite(p.tilt, 0.0).clamp(0.0, 1.57) * 0.7; }
         let x0 = ((p.x - radius - 1.0).floor().max(0.0) as usize).min(self.width);
         let y0 = ((p.y - radius - 1.0).floor().max(0.0) as usize).min(self.height);
         let x1 = ((p.x + radius + 1.0).ceil().max(0.0) as usize).min(self.width);
@@ -272,7 +285,7 @@ impl Engine {
         let lock = layer.alpha_lock;
         let color = brush.color;
         let smudging=brush.kind==6 || brush.kind>=128;
-        let shape=if brush.kind>=128 {brush.kind&127} else if smudging {2} else {brush.kind};
+        let shape=brush_shape(brush.kind);
         if smudging && stroke.smudge.is_none() {
             let mut tip=vec![0;32*32];
             for gy in 0..32 {for gx in 0..32 {
@@ -309,12 +322,17 @@ impl Engine {
                 13 => noise(x as u32,y as u32,19).powf(2.0)*0.38,
                 14 => (0.1+noise(x as u32,y as u32,73)*0.3)*(1.0-d*d).max(0.0),
                 3 => noise(x as u32, y as u32, stroke.seed / 15).powf(1.8) * 0.7,
-                4 => (1.0 - d.clamp(0.0, 1.0) * 0.7) * 0.10,
+                4 => (1.0-d*d).max(0.0).powf(2.0)*0.10,
+                16..=31 => {let hard=(shape-16) as f32/15.0*0.95;let t=((1.0-d)/(1.0-hard)).clamp(0.0,1.0);t*t*(3.0-2.0*t)},
                 6 => 0.11,
                 7 => if dx.abs() < radius * 0.32 { 0.85 } else { 0.0 },
                 _ => 1.0,
             };
-            let alpha = (strength * edge * texture).clamp(0.0, 1.0);
+            let hardness=if (64..=78).contains(&brush.kind) && brush.color&255<255 {
+                let hard=(brush.color&255) as f32/255.0*0.95;
+                let t=((1.0-d)/(1.0-hard)).clamp(0.0,1.0);t*t*(3.0-2.0*t)
+            }else{1.0};
+            let alpha = (strength * edge * texture * hardness).clamp(0.0, 1.0);
             let dst = pixels[idx];
             if smudging {
                 let carried=sample_tip(stroke.smudge.as_ref().unwrap(),(dx/radius+1.0)*16.0-0.5,(dy/radius+1.0)*16.0-0.5);
@@ -326,7 +344,7 @@ impl Engine {
                 };
                 let mixed=mix_rgba(dst,carried,(strength*mask*0.32).clamp(0.0,1.0));
                 pixels[idx]=if lock {(mixed&0xffffff)|(dst&0xff000000)}else{mixed};
-            } else if brush.kind == 5 {
+            } else if brush.kind == 5 || (16..=31).contains(&brush.kind) || (64..=78).contains(&brush.kind) {
                 if lock { continue; }
                 let a = channel(dst, 24) * (1.0 - alpha);
                 pixels[idx] = (dst & 0x00ffffff) | (((a * 255.0).round() as u32) << 24);
@@ -475,7 +493,7 @@ impl Engine {
         }
         let index = v["index"].as_u64().unwrap_or(self.state.active as u64) as usize;
         let n = |key: &str, default: f32| finite(v[key].as_f64().unwrap_or(default as f64) as f32, default);
-        if self.state.layers[self.state.active].locked && matches!(op,"clear"|"fill"|"flood"|"floodPreview"|"adjust"|"transform"|"delete"|"merge") {
+        if self.state.layers[self.state.active].locked && matches!(op,"clear"|"fill"|"flood"|"floodPreview"|"adjust"|"transform"|"transformMatrix"|"delete"|"merge") {
             return Err("This layer is locked. Swipe left and choose Unlock to edit it.".into());
         }
         if op=="merge" && self.state.active>0 && self.state.layers[self.state.active-1].locked {return Err("The layer below is locked".into());}
@@ -633,6 +651,11 @@ impl Engine {
                 }}
                 self.pixel_change(self.state.active,before);
             },
+            "transformMatrix" => {
+                let values=v["matrix"].as_array().filter(|a|a.len()==6).ok_or("Expected six affine values")?;
+                let mut m=[0.0;6];for (i,value) in values.iter().enumerate(){m[i]=value.as_f64().ok_or("Invalid affine value")? as f32;}
+                self.transform_affine(m)?;
+            },
             "transform" => self.transform(n("dx",0.0),n("dy",0.0),n("sx",1.0),n("sy",1.0),n("angle",0.0)),
             _ => return Err(format!("Unknown operation: {}",op)),
         }
@@ -645,7 +668,12 @@ impl Engine {
         let mut out=before.clone();
         let sel=&self.selection;
         for i in 0..out.len() { if sel.as_ref().is_none_or(|s|s[i]) { out[i]=0; } }
-        let (cx,cy)=(self.width as f32*0.5,self.height as f32*0.5);
+        let mut bounds=[self.width,self.height,0,0];
+        for y in 0..self.height {for x in 0..self.width {let i=y*self.width+x;
+            if before[i]>>24!=0 && sel.as_ref().is_none_or(|s|s[i]) {bounds[0]=bounds[0].min(x);bounds[1]=bounds[1].min(y);bounds[2]=bounds[2].max(x+1);bounds[3]=bounds[3].max(y+1);}
+        }}
+        if bounds[2]==0 {return;}
+        let (cx,cy)=((bounds[0]+bounds[2]) as f32*0.5,(bounds[1]+bounds[3]) as f32*0.5);
         let (sn,cs)=angle.sin_cos();
         for y in 0..self.height { for x in 0..self.width {
             let (px,py)=(x as f32-cx-dx,y as f32-cy-dy);
@@ -671,7 +699,7 @@ impl Engine {
             [16,8,0].iter().map(|s|(channel(a,*s)*aa-channel(b,*s)*ba).abs()).fold((aa-ba).abs(),f32::max)
         };
         let l=&mut self.state.layers[self.state.active]; let lock=l.alpha_lock;
-        let pixels=Arc::make_mut(&mut l.pixels); let mut seen=vec![false;pixels.len()]; let mut stack=vec![start];
+        let pixels=Arc::make_mut(&mut l.pixels); let mut seen=vec![false;pixels.len()]; let mut stack=vec![start];let mut fill_rect=[self.width,self.height,0,0];
         let matches=|i:usize| !self.selection.as_ref().is_some_and(|s|!s[i]) && distance(before[i],target)<=threshold.clamp(0.0,1.0);
         while let Some(i)=stack.pop() {
             if seen[i] || !matches(i){continue;}
@@ -680,12 +708,39 @@ impl Engine {
             let mut above=false;let mut below=false;
             while x<self.width {
                 let idx=row*self.width+x;if seen[idx]||!matches(idx){break;}
-                seen[idx]=true;pixels[idx]=if lock {(color&0xffffff)|(before[idx]&0xff000000)}else{color};
+                seen[idx]=true;fill_rect[0]=fill_rect[0].min(x);fill_rect[1]=fill_rect[1].min(row);fill_rect[2]=fill_rect[2].max(x+1);fill_rect[3]=fill_rect[3].max(row+1);pixels[idx]=if lock {(color&0xffffff)|(before[idx]&0xff000000)}else{color};
                 if row>0 {let n=idx-self.width;let ok=!seen[n]&&matches(n);if ok&&!above{stack.push(n);}above=ok;}
                 if row+1<self.height {let n=idx+self.width;let ok=!seen[n]&&matches(n);if ok&&!below{stack.push(n);}below=ok;}
                 x+=1;
             }
         }
+        // Replace the background contribution in a one-pixel antialiased fringe.
+        // Read only the original pixels so cleanup cannot propagate through an outline.
+        for y in fill_rect[1].saturating_sub(1)..(fill_rect[3]+1).min(self.height) { for x in fill_rect[0].saturating_sub(1)..(fill_rect[2]+1).min(self.width) {
+            let i=y*self.width+x;
+            if seen[i] || self.selection.as_ref().is_some_and(|s|!s[i]) { continue; }
+            let adjacent=(y.saturating_sub(1)..=(y+1).min(self.height-1)).any(|yy|
+                (x.saturating_sub(1)..=(x+1).min(self.width-1)).any(|xx|seen[yy*self.width+xx]));
+            if !adjacent { continue; }
+            let edge=before[i];let ea=channel(edge,24);
+            let repaired=if channel(target,24)<0.001 && ea>0.0 && ea<0.999 {
+                Some(composite(color,edge,1.0,"Normal"))
+            } else if channel(target,24)>0.999 && ea>0.999 {
+                let mut core=edge;let mut far=distance(edge,target);
+                for yy in y.saturating_sub(2)..=(y+2).min(self.height-1) {for xx in x.saturating_sub(2)..=(x+2).min(self.width-1) {
+                    let j=yy*self.width+xx;let d=distance(before[j],target);
+                    if !seen[j] && d>far && channel(before[j],24)>0.999 {core=before[j];far=d;}
+                }}
+                let a=[channel(target,16),channel(target,8),channel(target,0)];
+                let b=[channel(core,16),channel(core,8),channel(core,0)];
+                let c=[channel(edge,16),channel(edge,8),channel(edge,0)];
+                let norm=(0..3).map(|k|(b[k]-a[k]).powi(2)).sum::<f32>();
+                let coverage=if norm>1e-6 {(0..3).map(|k|(c[k]-a[k])*(b[k]-a[k])).sum::<f32>()/norm}else{1.0};
+                let error=(0..3).map(|k|(c[k]-(a[k]+(b[k]-a[k])*coverage)).abs()).fold(0.0,f32::max);
+                if coverage>0.001 && coverage<0.999 && error<0.025 {Some(composite(color,core,coverage,"Normal"))}else{None}
+            }else{None};
+            if let Some(value)=repaired {pixels[i]=if lock {(value&0xffffff)|(edge&0xff000000)}else{value};}
+        }}
         if record {self.pixel_change(self.state.active,before.as_ref().clone());}else{self.dirty=true;}
         Ok(())
     }

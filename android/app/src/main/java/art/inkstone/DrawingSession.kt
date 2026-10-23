@@ -76,7 +76,12 @@ class DrawingSession(width: Int, height: Int) : Closeable {
     private val storage = Executors.newSingleThreadExecutor()
     @Volatile private var penActive=false
     @Volatile private var dropActive=false
-    val isStrokeActive get()=penActive||dropActive
+    @Volatile internal var transformInteracting=false
+    @Volatile internal var transformEditing=false
+    val isStrokeActive get()=penActive||dropActive||transformInteracting||transformEditing
+    internal var beforeCommand:(String)->Unit={}
+    internal var beforeSnapshot:()->Unit={}
+    internal var onToolChange:()->Unit={}
     private val dropGeneration=AtomicLong(0)
     private val inputLock=Any()
     private data class StrokeSettings(val kind:Int,val color:Int,val size:Float,val opacity:Float,val flow:Float,val smooth:Float,val pressureSize:Float,val pressureOpacity:Float)
@@ -98,23 +103,46 @@ class DrawingSession(width: Int, height: Int) : Closeable {
     val canvasWidth get() = info.getInt("width")
     val canvasHeight get() = info.getInt("height")
 
-    var preset = brushPresets[0]
-    var size = preset.size
-    var opacity = 1f
-    var flow = preset.flow
+    private class ToolBrush(var preset:BrushPreset){
+        var size=preset.size;var opacity=1f;var flow=preset.flow
+        var pressureSize=preset.pressureSize;var pressureOpacity=preset.pressureOpacity
+    }
+    private val paintBrush=ToolBrush(brushPresets[0])
+    private val eraseBrush=ToolBrush(brushPresets[0])
+    private val currentBrush get()=if(tool=="Erase")eraseBrush else paintBrush
+    var preset:BrushPreset
+        get()=currentBrush.preset
+        set(value){currentBrush.preset=value}
+    var size:Float
+        get()=currentBrush.size
+        set(value){currentBrush.size=value}
+    var opacity:Float
+        get()=currentBrush.opacity
+        set(value){currentBrush.opacity=value}
+    var flow:Float
+        get()=currentBrush.flow
+        set(value){currentBrush.flow=value}
     var stabilization = .12f
     var rendererMode="auto"; private set
     fun setRenderer(mode:String,then:()->Unit={}) {
         rendererMode=mode
         command("renderer",JSONObject().put("mode",mode)){then()}
     }
+    var penOnly=false
+    var protectControls=true
+    var eraserHardness=1f
     var pressureEnabled=true
     var canvasLocked=false
     var quickShape=true
-    var pressureSize = preset.pressureSize
-    var pressureOpacity = preset.pressureOpacity
+    var pressureSize:Float
+        get()=currentBrush.pressureSize
+        set(value){currentBrush.pressureSize=value}
+    var pressureOpacity:Float
+        get()=currentBrush.pressureOpacity
+        set(value){currentBrush.pressureOpacity=value}
     var color = 0xff202020.toInt()
     var tool = "Paint"
+        set(value){if(field==value)return;field=value;onToolChange()}
     var fingerDrawing = true
     var guide = false
     var symmetry = false
@@ -141,8 +169,12 @@ class DrawingSession(width: Int, height: Int) : Closeable {
         if (closed) return
         if(phase==0)penActive=true
         if(phase==2||phase==3)penActive=false
-        val kind=if(eraser||tool=="Erase")5 else if(tool=="Smudge")128+ preset.kind else preset.kind
-        val settings=StrokeSettings(kind,color,if(dynamicBrushScaling)size else size/viewZoom.coerceAtLeast(.02f),opacity,flow,stabilization,if(pressureEnabled)pressureSize else 0f,if(pressureEnabled)pressureOpacity else 0f)
+        val erasing=eraser||tool=="Erase"
+        val brush=if(erasing)eraseBrush else paintBrush
+        val kind=if(erasing)64+brush.preset.kind else if(tool=="Smudge")128+brush.preset.kind else brush.preset.kind
+        // Erasing uses alpha coverage; the unused color carries edge hardness to both renderers.
+        val ink=if(erasing)(eraserHardness.coerceIn(0f,1f)*255+.5f).toInt() else color
+        val settings=StrokeSettings(kind,ink,if(dynamicBrushScaling)brush.size else brush.size/viewZoom.coerceAtLeast(.02f),brush.opacity,brush.flow,stabilization,if(pressureEnabled)brush.pressureSize else 0f,if(pressureEnabled)brush.pressureOpacity else 0f)
         synchronized(inputLock){
             if(phase==1){
                 val pending=pendingMoves
@@ -193,6 +225,7 @@ class DrawingSession(width: Int, height: Int) : Closeable {
 
     fun command(op: String, values: JSONObject = JSONObject(), then: (JSONObject) -> Unit = {}) {
         if (closed) return
+        beforeCommand(op)
         values.put("op", op)
         synchronized(inputLock){pendingMoves=null}
         worker.execute {
@@ -232,7 +265,35 @@ class DrawingSession(width: Int, height: Int) : Closeable {
         }
     }
 
+    fun writePsd(file:java.io.File,then:(String?)->Unit){
+        beforeSnapshot()
+        if(closed){file.delete();then("Drawing engine is closed");return}
+        worker.execute {
+            val result=runCatching {JSONObject(NativeBridge.writePsd(handle,file.absolutePath))}
+            val error=result.exceptionOrNull()?.message?:result.getOrNull()?.optString("error")?.takeIf{it.isNotEmpty()}
+            main.post {if(closed){file.delete()}else{if(error!=null)file.delete();then(error)}}
+        }
+    }
+    fun documentSnapshot(then:(ByteArray?)->Unit){
+        beforeSnapshot()
+        if(closed)return
+        worker.execute{val bytes=NativeBridge.save(handle);main.post{if(!closed)then(bytes)}}
+    }
+    fun imageSnapshot(then:(Bitmap?)->Unit){
+        beforeSnapshot()
+        if(closed)return
+        worker.execute{
+            val result=runCatching{
+                val w=canvasWidth;val h=canvasHeight
+                val buffer=ByteBuffer.allocateDirect(w*h*4)
+                check(NativeBridge.render(handle,buffer,true)){"Could not render artwork"}
+                Bitmap.createBitmap(w,h,Bitmap.Config.ARGB_8888).also{copyRgba(it,buffer)}
+            }.getOrNull()
+            main.post{if(closed)result?.recycle() else then(result)}
+        }
+    }
     fun snapshot(then: (ByteArray?, Bitmap?) -> Unit) {
+        beforeSnapshot()
         if (closed) return
         worker.execute {
             val bytes = NativeBridge.save(handle)
@@ -245,6 +306,7 @@ class DrawingSession(width: Int, height: Int) : Closeable {
     }
 
     fun persist(store: DocumentStore, id: String, name: String, then: (String?) -> Unit = {}) {
+        beforeSnapshot()
         if (closed) return
         synchronized(inputLock){pendingMoves=null}
         worker.execute {
@@ -272,6 +334,7 @@ class DrawingSession(width: Int, height: Int) : Closeable {
     }
 
     fun import(image: Bitmap, then: () -> Unit) {
+        beforeSnapshot()
         val data = IntArray(image.width * image.height)
         image.getPixels(data, 0, image.width, 0, 0, image.width, image.height)
         worker.execute {
@@ -281,6 +344,13 @@ class DrawingSession(width: Int, height: Int) : Closeable {
         }
     }
 
+    internal fun transformSnapshot(then:(TransformSnapshot?)->Unit){
+        if(closed)return
+        worker.execute{
+            val result=runCatching{val data=checkNotNull(NativeBridge.transformSnapshot(handle));val state=JSONObject(NativeBridge.command(handle,"{\"op\":\"info\"}"));TransformSnapshot.decode(state,data)}
+            main.post{if(closed)result.getOrNull()?.recycle()else{result.onFailure{onError(it.message?:"Cannot prepare transform")};then(result.getOrNull())}}
+        }
+    }
     fun thumbnails(then: () -> Unit) {
         if (closed) return
         worker.execute {

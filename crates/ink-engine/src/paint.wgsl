@@ -41,6 +41,7 @@ fn sample_tip(pos:vec2<f32>)->u32{
  let delta=vec2<f32>(xy)+0.5-p.dab.xy;let radius=p.dab.z;let d=length(delta)/max(radius,0.1);
  if(d>1.0+0.7/radius){return;}let edge=clamp((1.0-d)*radius+0.5,0.0,1.0);
  let smudging=p.canvas.z==6u || p.canvas.z>=128u;var shape=p.canvas.z;if(smudging){shape=select(2u,p.canvas.z&127u,p.canvas.z>=128u);}
+ if(p.canvas.z>=64u && p.canvas.z<=78u){shape=p.canvas.z-64u;}
  var texture=1.0;
  switch(shape){
  case 1u:{texture=0.16+noise(xy.x,xy.y,91u)*0.58;}
@@ -52,11 +53,14 @@ fn sample_tip(pos:vec2<f32>)->u32{
  case 13u:{texture=pow(noise(xy.x,xy.y,19u),2.0)*0.38;}
  case 14u:{texture=(0.1+noise(xy.x,xy.y,73u)*0.3)*max(1.0-d*d,0.0);}
  case 3u:{texture=pow(noise(xy.x,xy.y,p.flags.y/15u),1.8)*0.7;}
- case 4u:{texture=(1.0-clamp(d,0.0,1.0)*0.7)*0.10;}
+ case 4u:{texture=pow(max(1.0-d*d,0.0),2.0)*0.10;}
  case 7u:{texture=select(0.0,0.85,abs(delta.x)<radius*0.32);}
  default:{}
  }
- let alpha=clamp(p.dab.w*edge*texture,0.0,1.0);let dst=pixels[i];let lock=p.canvas.w!=0u;
+ if(shape>=16u && shape<=31u){let hard=f32(shape-16u)/15.0*0.95;let t=clamp((1.0-d)/(1.0-hard),0.0,1.0);texture=t*t*(3.0-2.0*t);}
+ var hardness=1.0;
+ if(p.canvas.z>=64u && p.canvas.z<=78u && (p.flags.x&255u)<255u){let hard=f32(p.flags.x&255u)/255.0*0.95;let t=clamp((1.0-d)/(1.0-hard),0.0,1.0);hardness=t*t*(3.0-2.0*t);}
+ let alpha=clamp(p.dab.w*edge*texture*hardness,0.0,1.0);let dst=pixels[i];let lock=p.canvas.w!=0u;
  if(smudging){
   let carried=sample_tip((delta/radius+1.0)*16.0-0.5);var mask=edge;
   switch(shape){
@@ -66,7 +70,7 @@ fn sample_tip(pos:vec2<f32>)->u32{
   default:{}
   }
   let c=mix_rgba(dst,carried,clamp(p.dab.w*mask*0.32,0.0,1.0));pixels[i]=select(c,(c&0xffffffu)|(dst&0xff000000u),lock);
- }else if(p.canvas.z==5u){if(!lock){pixels[i]=(dst&0xffffffu)|(u32(f32(dst>>24u)*(1.0-alpha)+0.5)<<24u);}}
+ }else if(p.canvas.z==5u || (p.canvas.z>=16u && p.canvas.z<=31u) || (p.canvas.z>=64u && p.canvas.z<=78u)){if(!lock){pixels[i]=(dst&0xffffffu)|(u32(f32(dst>>24u)*(1.0-alpha)+0.5)<<24u);}}
  else if(lock){if(dst>>24u!=0u){pixels[i]=(over(dst|0xff000000u,p.flags.x|0xff000000u,alpha)&0xffffffu)|(dst&0xff000000u);}}
  else{pixels[i]=over(dst,p.flags.x,alpha);}
 }

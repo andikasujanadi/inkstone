@@ -19,7 +19,7 @@ internal class PopoverBackground(private val density:Float, var anchor:Float,pri
         outline.reset();outline.moveTo(r,top);outline.lineTo(a-10*d,top);outline.lineTo(a,1*d);outline.lineTo(a+10*d,top)
         outline.lineTo(w-r,top);outline.quadTo(w,top,w,top+r);outline.lineTo(w,h-r);outline.quadTo(w,h,w-r,h)
         outline.lineTo(r,h);outline.quadTo(0f,h,0f,h-r);outline.lineTo(0f,top+r);outline.quadTo(0f,top,r,top);outline.close()
-        p.shader=LinearGradient(0f,top,0f,h,if(light)intArrayOf(0xffe9e9e9.toInt(),0xffe5e5e5.toInt()) else intArrayOf(0xff363d40.toInt(),0xff292e31.toInt()),null,Shader.TileMode.CLAMP)
+        p.shader=LinearGradient(0f,top,0f,h,if(light)intArrayOf(0xffe9e9e9.toInt(),0xffe5e5e5.toInt()) else intArrayOf(0xff363d40.toInt(),StudioColors.track),null,Shader.TileMode.CLAMP)
     }
     override fun draw(canvas:Canvas){p.style=Paint.Style.FILL;canvas.drawPath(outline,p);val shader=p.shader;p.shader=null;p.style=Paint.Style.STROKE;p.strokeWidth=density;p.color=if(light)0xffdedede.toInt() else 0xff596164.toInt();canvas.drawPath(outline,p);p.shader=shader}
     override fun setAlpha(alpha:Int){p.alpha=alpha}
@@ -42,7 +42,7 @@ internal class StudioSwitch(context:Context,label:String,initial:Boolean,private
     }}
     override fun onDraw(c:Canvas){
         val d=resources.displayMetrics.density;val w=48*d;val h=28*d;val x=(width-w)/2;val y=(height-h)/2
-        p.color=Color.rgb((86-42*amount).toInt(),(93+75*amount).toInt(),(97+144*amount).toInt());c.drawRoundRect(x,y,x+w,y+h,h/2,h/2,p)
+        val on=StudioColors.accent;p.color=Color.rgb((86+(Color.red(on)-86)*amount).toInt(),(93+(Color.green(on)-93)*amount).toInt(),(97+(Color.blue(on)-97)*amount).toInt());c.drawRoundRect(x,y,x+w,y+h,h/2,h/2,p)
         p.color=0xffd5dadd.toInt();c.drawCircle(x+14*d+20*d*amount,y+h/2,12*d,p)
     }
     override fun onInitializeAccessibilityNodeInfo(info:AccessibilityNodeInfo){super.onInitializeAccessibilityNodeInfo(info);info.className=Switch::class.java.name;info.isCheckable=true;info.isChecked=checked}
@@ -75,7 +75,7 @@ internal class CategoryIcon(context:Context,private val name:String,private val 
     private val path=Path()
     override fun onDraw(c:Canvas){
         c.save();c.translate(width/2f,height/2f);val scale=resources.displayMetrics.density;c.scale(scale,scale)
-        p.color=if(chosen)0xff43b6f3.toInt() else 0xffaab7bc.toInt();p.style=Paint.Style.STROKE;p.strokeWidth=1.7f;p.strokeCap=Paint.Cap.ROUND;p.strokeJoin=Paint.Join.ROUND
+        p.color=if(chosen)StudioColors.accentSoft else 0xffaab7bc.toInt();p.style=Paint.Style.STROKE;p.strokeWidth=1.7f;p.strokeCap=Paint.Cap.ROUND;p.strokeJoin=Paint.Join.ROUND
         path.reset()
         when(name){
             "Recent"->{for(i in 0..9){val a=(i*PI/5-PI/2);val r=if(i%2==0)8f else 3.5f;val x=cos(a).toFloat()*r;val y=sin(a).toFloat()*r;if(i==0)path.moveTo(x,y)else path.lineTo(x,y)};path.close();p.style=Paint.Style.FILL;c.drawPath(path,p)}

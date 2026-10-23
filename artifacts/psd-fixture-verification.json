@@ -1,0 +1,18 @@
+{
+  "reader": "psd-tools",
+  "dimensions": [
+    48,
+    32
+  ],
+  "layers": [
+    "Background colour",
+    "Base \u00b7 \u5e95\u5c42",
+    "Blue overlay",
+    "Hidden",
+    "Empty"
+  ],
+  "exact_layer_pixels_checked": 2436,
+  "merged_premultiplied_error": 0.9882352941176471,
+  "photoshop_desktop_tested": false,
+  "passed": true
+}

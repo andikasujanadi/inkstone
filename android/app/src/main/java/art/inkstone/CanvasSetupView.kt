@@ -24,6 +24,7 @@ internal object CanvasPresets {
 }
 
 internal class NewCanvasMenu(private val activity:MainActivity,private val close:()->Unit):LinearLayout(activity){
+    private var mode="raster"
     private val d=resources.displayMetrics.density
     private fun dp(n:Int)=(n*d).roundToInt()
     private fun round(c:Int,r:Int)=GradientDrawable().apply{setColor(c);cornerRadius=dp(r).toFloat()}
@@ -32,11 +33,14 @@ internal class NewCanvasMenu(private val activity:MainActivity,private val close
         orientation=VERTICAL;background=PopoverBackground(d,0f,true);setPadding(dp(12),dp(26),dp(12),dp(12))
         val header=LinearLayout(activity).apply{gravity=Gravity.CENTER_VERTICAL;setPadding(dp(12),0,dp(4),dp(10))}
         header.addView(text("New canvas",25f).apply{typeface=Typeface.DEFAULT_BOLD},LayoutParams(0,dp(50),1f))
-        header.addView(ToolIcon(activity,"NewCanvas"){close();activity.customCanvas()}.apply{light=true;contentDescription="Custom Canvas"},LayoutParams(dp(48),dp(48)));addView(header)
+        header.addView(ToolIcon(activity,"NewCanvas"){close();activity.customCanvas(mode)}.apply{light=true;contentDescription="Custom Canvas"},LayoutParams(dp(48),dp(48)));addView(header)
+        val modeRow=RadioGroup(activity).apply{orientation=RadioGroup.HORIZONTAL;contentDescription="New document type"}
+        for((value,title)in listOf("raster" to "Raster","vector" to "Vector · Experimental"))modeRow.addView(RadioButton(activity).apply{setTextColor(0xff333333.toInt());text=title;contentDescription="${title.substringBefore(" ·")} document";id=View.generateViewId();isChecked=value==mode;setOnClickListener{mode=value}},LayoutParams(0,dp(44),1f))
+        addView(modeRow,LayoutParams(-1,dp(44)))
         val list=LinearLayout(activity).apply{orientation=VERTICAL}
         val metrics=resources.displayMetrics
         fun item(preset:CanvasPreset,detail:String="${preset.width} × ${preset.height}px"){
-            val row=LinearLayout(activity).apply{gravity=Gravity.CENTER_VERTICAL;setPadding(dp(14),0,dp(12),0);background=round(0x66ffffff,StudioShape.CORNER_DP);isClickable=true;isFocusable=true;contentDescription="Create ${preset.name}";setOnClickListener{close();activity.newCanvas(preset.width,preset.height,preset.dpi,preset.name)}}
+            val row=LinearLayout(activity).apply{gravity=Gravity.CENTER_VERTICAL;setPadding(dp(14),0,dp(12),0);background=round(0x66ffffff,StudioShape.CORNER_DP);isClickable=true;isFocusable=true;contentDescription="Create ${preset.name}";setOnClickListener{close();activity.newCanvas(preset.width,preset.height,preset.dpi,preset.name,mode=mode)}}
             row.addView(text(preset.name,17f),LayoutParams(0,-1,1f));row.addView(text("sRGB",11f,0xff656565.toInt()).apply{setPadding(dp(7),0,dp(7),0)},LayoutParams(-2,-1))
             row.addView(text(detail,12f,0xff656565.toInt()),LayoutParams(-2,-1));list.addView(row,LayoutParams(-1,dp(52)).apply{bottomMargin=dp(3)})
         }
@@ -47,10 +51,11 @@ internal class NewCanvasMenu(private val activity:MainActivity,private val close
     }
 }
 
-internal class CanvasSetupView(private val activity:MainActivity):FrameLayout(activity){
+internal class CanvasSetupView(private val activity:MainActivity,initialMode:String="raster"):FrameLayout(activity){
+    private var mode=initialMode
     private val d=resources.displayMetrics.density
     private fun dp(n:Int)=(n*d).roundToInt()
-    private val blue=0xff008aff.toInt()
+    private val blue=StudioColors.accent
     private var pixelsW=2048.0;private var pixelsH=1536.0;private var dpi=300
     private var unit="Pixels";private var field="Width";private var entry="2048";private var replace=true
     private var section="Dimensions";private var bg=Color.WHITE;private var transparent=false
@@ -77,7 +82,7 @@ internal class CanvasSetupView(private val activity:MainActivity):FrameLayout(ac
         val headerHeight=dp(78);val keypadHeight=min(dp(300),(h*.40f).toInt())
         val sidebar=LinearLayout(activity).apply{orientation=LinearLayout.VERTICAL;background=round(0xff2d2d2d.toInt(),StudioShape.CORNER_DP);setPadding(dp(8),dp(8),dp(8),0)}
         sidebar.addView(label("Custom Canvas",if(narrow)18f else 24f).apply{typeface=Typeface.DEFAULT_BOLD},LinearLayout.LayoutParams(-1,headerHeight-dp(12)))
-        for((name,icon) in listOf("Dimensions" to "Canvas","Colour profile" to "Color","Time-lapse settings" to "Video","Canvas properties" to "Prefs")){
+        for((name,icon) in listOf("Dimensions" to "Canvas","Document type" to "Select","Colour profile" to "Color","Time-lapse settings" to "Video","Canvas properties" to "Prefs")){
             val row=LinearLayout(activity).apply{gravity=Gravity.CENTER_VERTICAL;background=round(if(section==name)blue else Color.TRANSPARENT,StudioShape.CORNER_DP);isClickable=true;isFocusable=true;contentDescription=name;setOnClickListener{commit();section=name;build(lastWidth,lastHeight)}}
             row.addView(ToolIcon(activity,icon){commit();section=name;build(lastWidth,lastHeight)},LinearLayout.LayoutParams(dp(if(narrow)28 else 42),dp(42)))
             row.addView(label(name,if(narrow)12f else 16f).apply{setPadding(dp(4),0,dp(4),0)},LinearLayout.LayoutParams(0,dp(52),1f));sidebar.addView(row,LinearLayout.LayoutParams(-1,dp(54)).apply{bottomMargin=dp(5)})
@@ -86,13 +91,15 @@ internal class CanvasSetupView(private val activity:MainActivity):FrameLayout(ac
         val header=LinearLayout(activity).apply{gravity=Gravity.CENTER_VERTICAL}
         val title=label(canvasName,if(narrow)16f else 23f,Color.WHITE).apply{gravity=Gravity.CENTER;isClickable=true;contentDescription="Canvas name";setOnClickListener{activity.textDialog("Canvas name",canvasName){canvasName=it;text=it}}}
         header.addView(title,LinearLayout.LayoutParams(0,-1,1f))
-        header.addView(label("Cancel",14f).apply{setPadding(0,0,0,0);isSingleLine=true;gravity=Gravity.CENTER;background=round(0xff292929.toInt(),StudioShape.CORNER_DP);isClickable=true;setOnClickListener{activity.showGallery()}},LinearLayout.LayoutParams(dp(78),dp(44)))
+        header.addView(label("Cancel",14f).apply{setPadding(0,0,0,0);isSingleLine=true;gravity=Gravity.CENTER;background=round(StudioColors.workspace,StudioShape.CORNER_DP);isClickable=true;setOnClickListener{activity.showGallery()}},LinearLayout.LayoutParams(dp(78),dp(44)))
         header.addView(label("✓",28f,Color.WHITE).apply{setPadding(0,0,0,0);gravity=Gravity.CENTER;contentDescription="Create custom canvas";background=round(blue,StudioShape.CORNER_DP);isClickable=true;isFocusable=true;setOnClickListener{create()}},LinearLayout.LayoutParams(dp(48),dp(48)).apply{setMargins(dp(10),0,dp(14),0)})
         addView(header,LayoutParams(-1,headerHeight).apply{leftMargin=side+dp(16)})
         details=LinearLayout(activity).apply{orientation=LinearLayout.VERTICAL;setPadding(dp(if(narrow)12 else 42),dp(18),dp(if(narrow)12 else 34),dp(10))}
         val scroll=ScrollView(activity).apply{addView(details)}
         addView(scroll,LayoutParams(-1,-1).apply{leftMargin=side+dp(14);topMargin=headerHeight;bottomMargin=if(section=="Dimensions")keypadHeight else dp(10)})
         when(section){
+            "Document type"->{val g=group();for((value,title)in listOf("raster" to "Raster · textured painting","vector" to "Vector · Experimental · SVG"))g.addView(label("${if(mode==value)"✓ " else ""}$title",17f,Color.WHITE).apply{contentDescription="${value.replaceFirstChar{it.uppercase()}} document";isClickable=true;setOnClickListener{mode=value;build(lastWidth,lastHeight)}},LinearLayout.LayoutParams(-1,dp(62)))
+                details.addView(label("Vector uses monoline paths, shapes and editable objects. Airbrush and smudge remain in Raster mode.",14f).apply{maxLines=4},LinearLayout.LayoutParams(-1,dp(140)))}
             "Dimensions"->{
                 val dimensions=group();numberRow(dimensions,"Width");numberRow(dimensions,"Height")
                 val resolution=group();numberRow(resolution,"DPI");numberRow(resolution,"Maximum Layers",false)
@@ -151,6 +158,6 @@ internal class CanvasSetupView(private val activity:MainActivity):FrameLayout(ac
     private fun create(){
         commit();val w=pixelsW.roundToInt();val h=pixelsH.roundToInt()
         if(w<16||h<16||w>8192||h>8192||w.toLong()*h>16_777_216){if(::error.isInitialized)error.text="16–8192 pixels per side; maximum area 16 megapixels.";return}
-        val preset=CanvasPreset(canvasName,w,h,dpi);CanvasPresets.add(activity,preset);activity.newCanvas(w,h,dpi,canvasName,bg,!transparent)
+        val preset=CanvasPreset(canvasName,w,h,dpi);CanvasPresets.add(activity,preset);activity.newCanvas(w,h,dpi,canvasName,bg,!transparent,mode)
     }
 }

@@ -115,3 +115,19 @@ pub extern "system" fn Java_art_inkstone_NativeBridge_preview(env:JNIEnv,_this:J
     let Ok(array)=env.new_int_array(pixels.len() as i32) else{return std::ptr::null_mut();};
     if env.set_int_array_region(&array,0,&pixels).is_err(){return std::ptr::null_mut();}array.into_raw()
 }
+
+#[no_mangle]
+pub extern "system" fn Java_art_inkstone_NativeBridge_writePsd(mut env:JNIEnv,_this:JObject,id:jlong,path:JString)->jstring {
+    let path:String=match env.get_string(&path){Ok(s)=>s.into(),Err(_)=>return output(&env,error("Invalid export path"))};
+    let result=match engines().lock().unwrap().get_mut(&id) {
+        Some(e)=>std::fs::File::create(&path).and_then(|file|e.write_psd(&mut std::io::BufWriter::new(file))).map(|_|json!({"ok":true})).unwrap_or_else(|e|error(e.to_string())),
+        None=>error("Drawing engine is closed")
+    };output(&env,result)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_art_inkstone_NativeBridge_transformSnapshot(env:JNIEnv,_this:JObject,id:jlong)->jintArray {
+    let mut guard=engines().lock().unwrap();let Some(e)=guard.get_mut(&id)else{return std::ptr::null_mut();};
+    let data=e.transform_snapshot();let Ok(array)=env.new_int_array(data.len() as i32)else{return std::ptr::null_mut();};
+    if env.set_int_array_region(&array,0,&data).is_err(){return std::ptr::null_mut();}array.into_raw()
+}

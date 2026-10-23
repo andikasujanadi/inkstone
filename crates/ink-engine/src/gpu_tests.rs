@@ -48,7 +48,7 @@ fn physical_gpu_brush_smudge_history() {
     let mut cpu = Engine::new(192, 128).unwrap();
     println!("GPU: {}", gpu.info());
     for kind in [
-        0, 1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 12, 13, 14, 128, 130, 136, 139,
+        0, 1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 12, 13, 14, 16, 23, 31, 64, 65, 66, 67, 68, 71, 72, 73, 74, 75, 76, 77, 78, 128, 130, 136, 139,
     ] {
         let brush = Brush {
             kind,
@@ -320,5 +320,22 @@ fn physical_gpu_large_brush_timing() {
             engine.end();
             println!("{label} {backend}: {} ms", start.elapsed().as_millis());
         }
+    }
+}
+
+#[test]
+#[ignore = "Requires a physical Metal or Vulkan adapter"]
+fn physical_gpu_affine_transform_composite_and_undo() {
+    let mut e=gpu_engine(128,96);
+    e.begin(Sample{x:45.,y:40.,pressure:1.,tilt:0.},Brush{size:48.,pressure_size:0.,color:0xff2695c8,..Brush::default()});e.end();
+    e.render_patch(true).unwrap();let original=e.save().unwrap();let undo=e.undo.len();
+    e.transform_snapshot();assert_eq!(original,e.save().unwrap());assert_eq!(undo,e.undo.len());
+    e.command(&json!({"op":"transformMatrix","matrix":[0.7,0.4,-0.4,0.7,25,2]})).unwrap();
+    for step in 0..3 {
+        let patch=e.render_patch(true).unwrap();assert!(e.gpu.is_some());
+        for y in 0..96 {for x in 0..128 {let a=patch[4+y*128+x]as u32;let b=e.color_at(x,y,true);
+            for shift in [0,8,16,24] {assert!(((a>>shift&255)as i32-(b>>shift&255)as i32).abs()<=1);}
+        }}
+        if step==0 {assert!(e.undo());assert_eq!(original,e.save().unwrap());}else if step==1 {assert!(e.redo());}
     }
 }

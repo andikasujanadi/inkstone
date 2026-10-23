@@ -11,7 +11,7 @@ import java.util.UUID
 import java.util.zip.GZIPInputStream
 import java.util.zip.GZIPOutputStream
 
-data class Artwork(val id: String, val name: String, val width: Int, val height: Int, val modified: Long)
+data class Artwork(val id: String, val name: String, val width: Int, val height: Int, val modified: Long, val mode:String="raster")
 
 class DocumentStore(context: Context) {
     private val root = File(context.filesDir, "artworks").apply { mkdirs() }
@@ -23,17 +23,17 @@ class DocumentStore(context: Context) {
     fun list(): List<Artwork> = root.listFiles()?.filter { it.extension == "json" }?.mapNotNull {
         runCatching {
             val j = JSONObject(it.readText())
-            Artwork(it.nameWithoutExtension, j.getString("name"), j.getInt("width"), j.getInt("height"), j.getLong("modified"))
+            Artwork(it.nameWithoutExtension, j.getString("name"), j.getInt("width"), j.getInt("height"), j.getLong("modified"),j.optString("mode","raster"))
         }.getOrNull()
     }?.sortedByDescending { it.modified } ?: emptyList()
-    fun save(id: String, name: String, bytes: ByteArray, image: Bitmap, documentWidth:Int=image.width, documentHeight:Int=image.height) {
+    fun save(id: String, name: String, bytes: ByteArray, image: Bitmap, documentWidth:Int=image.width, documentHeight:Int=image.height,mode:String="raster") {
         atomic(file(id, "inkstone")) { output -> GZIPOutputStream(output).use { it.write(bytes) } }
         val scale=minOf(1f,480f/maxOf(image.width,image.height))
         val thumbnail=if(scale<1f)Bitmap.createScaledBitmap(image,(image.width*scale).toInt().coerceAtLeast(1),(image.height*scale).toInt().coerceAtLeast(1),true) else image
         try { atomic(file(id, "png")) { check(thumbnail.compress(Bitmap.CompressFormat.PNG, 100, it)) } }
         finally { if(thumbnail!==image)thumbnail.recycle() }
         val metadata = JSONObject().put("name", name).put("width", documentWidth).put("height", documentHeight)
-            .put("modified", System.currentTimeMillis()).toString().toByteArray()
+            .put("mode",mode).put("modified", System.currentTimeMillis()).toString().toByteArray()
         atomic(file(id, "json")) { it.write(metadata) }
     }
     private fun atomic(file: File, write: (java.io.OutputStream) -> Unit) {

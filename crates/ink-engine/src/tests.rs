@@ -266,3 +266,149 @@ fn colordrop_stays_inside_a_closed_outline(){
     assert_eq!(e.state.layers[0].pixels[4*40+4],0);assert_eq!(e.state.layers[0].pixels[8*40+20],0xff000000);
     e.command(&json!({"op":"floodCommit"})).unwrap();assert_eq!(e.undo.len(),1);
 }
+
+#[test]
+fn object_scale_uses_content_center_and_can_be_undone() {
+    let mut e=Engine::new(100,100).unwrap();
+    let data=Arc::make_mut(&mut e.state.layers[0].pixels);
+    for y in 20..30 {for x in 10..20 {data[y*100+x]=0xffaabbcc;}}
+    let before=e.state.layers[0].pixels.clone();
+    e.command(&json!({"op":"transform","sx":2.0,"sy":2.0})).unwrap();
+    assert_eq!(e.state.layers[0].pixels[25*100+15],0xffaabbcc);
+    assert_eq!(e.state.layers[0].pixels[16*100+6],0xffaabbcc);
+    assert_eq!(e.state.layers[0].pixels[40*100+40],0);
+    assert!(e.undo());assert_eq!(e.state.layers[0].pixels,before);
+}
+
+#[test]
+fn psd_export_does_not_close_live_stroke_or_change_pixels_and_reports_write_errors(){
+    let mut e=Engine::new(32,32).unwrap();
+    e.begin(Sample{x:16.0,y:16.0,pressure:1.0,tilt:0.0},Brush::default());
+    let before=e.save().unwrap();let mut output=Vec::new();e.write_psd(&mut output).unwrap();
+    assert!(e.stroke.is_some());assert_eq!(e.save().unwrap(),before);assert_eq!(e.undo.len(),0);
+    assert_eq!(&output[..6],b"8BPS\0\x01");assert_eq!(&output[12..14],&4u16.to_be_bytes());
+    struct Broken;
+    impl std::io::Write for Broken {fn write(&mut self,_:&[u8])->std::io::Result<usize>{Err(std::io::Error::other("Full disk"))}fn flush(&mut self)->std::io::Result<()>{Ok(())}}
+    assert!(e.write_psd(&mut Broken).is_err());assert!(e.stroke.is_some());
+}
+
+#[test]
+fn soft_brush_deposition_depends_on_distance_not_event_count() {
+    for kind in [2, 4, 8, 9] {
+        let brush=Brush{kind,size:40.0,stabilization:0.0,pressure_size:0.0,..Brush::default()};
+        let p=|x|Sample{x,y:40.0,pressure:1.0,tilt:0.0};
+        let mut sparse=Engine::new(160,80).unwrap();let mut dense=Engine::new(160,80).unwrap();
+        sparse.begin(p(20.0),brush);dense.begin(p(20.0),brush);
+        sparse.sample(p(140.0));
+        for x in 21..=140 {dense.sample(p(x as f32));}
+        let before=dense.state.layers[0].pixels.clone();
+        for _ in 0..100 {dense.sample(p(140.0));}
+        assert_eq!(before,dense.state.layers[0].pixels,"stationary samples darken kind {kind}");
+        sparse.end();dense.end();
+        let difference:f32=sparse.state.layers[0].pixels.iter().zip(dense.state.layers[0].pixels.iter()).map(|(a,b)|((*a>>24) as f32-(*b>>24) as f32).abs()).sum();
+        assert!(difference/12800.0<0.1,"event density changes kind {kind}: {difference}");
+    }
+}
+
+#[test]
+fn eraser_hardness_preserves_feathered_edges_and_undo() {
+    let mut results=Vec::new();
+    for kind in [16,23,5] {
+        let mut e=Engine::new(64,64).unwrap();Arc::make_mut(&mut e.state.layers[0].pixels).fill(0xff204060);
+        let before=e.save().unwrap();
+        e.begin(Sample{x:32.0,y:32.0,pressure:1.0,tilt:0.0},Brush{kind,size:40.0,pressure_size:0.0,stabilization:0.0,..Brush::default()});e.end();
+        results.push(e.state.layers[0].pixels[32*64+46]>>24);
+        assert!(e.undo());assert_eq!(before,e.save().unwrap());
+    }
+    assert!(results[0]>results[1] && results[1]>results[2]);assert_eq!(results[2],0);
+}
+
+#[test]
+fn colordrop_repairs_only_the_antialiased_fringe() {
+    for opaque in [false,true] {
+        let mut e=Engine::new(64,64).unwrap();let bg=if opaque{0xffffffff}else{0};
+        let pixels=Arc::make_mut(&mut e.state.layers[0].pixels);pixels.fill(bg);
+        for y in 14..50 {for x in 14..50 {
+            let inner=(16..48).contains(&x) && (16..48).contains(&y);
+            let fringe=(15..49).contains(&x) && (15..49).contains(&y);
+            pixels[y*64+x]=if inner{bg}else if fringe{if opaque{0xff808080}else{0x80000000}}else{0xff000000};
+        }}
+        let before=e.save().unwrap();let color=0xff20c060u32;
+        e.command(&json!({"op":"floodPreview","x":30,"y":30,"threshold":0.1,"color":color})).unwrap();
+        let p=&e.state.layers[0].pixels;
+        assert_eq!(p[30*64+16],color);assert_eq!(p[30*64+14],0xff000000);assert_eq!(p[30*64+13],bg);
+        let edge=p[30*64+15];assert_eq!(edge>>24,255);assert!(channel(edge,8)>0.30 && channel(edge,8)<0.50);
+        e.command(&json!({"op":"floodCancel"})).unwrap();assert_eq!(before,e.save().unwrap());
+        e.command(&json!({"op":"flood","x":30,"y":30,"threshold":0.1,"color":color})).unwrap();
+        assert!(e.undo());assert_eq!(before,e.save().unwrap());assert!(e.redo());assert_eq!(e.state.layers[0].pixels[30*64+15],edge);
+    }
+}
+
+#[test]
+fn colordrop_fringe_respects_selection_and_alpha_lock(){
+    let mut e=Engine::new(32,32).unwrap();let pixels=Arc::make_mut(&mut e.state.layers[0].pixels);
+    pixels[16*32+17]=0x80000000;
+    e.selection=Some((0..1024).map(|i|i%32<17).collect());
+    e.command(&json!({"op":"flood","x":16,"y":16,"color":0xffff0000u32})).unwrap();assert_eq!(e.state.layers[0].pixels[16*32+17],0x80000000);
+    e.selection=None;e.state.layers[0].alpha_lock=true;let before=e.state.layers[0].pixels.clone();
+    e.command(&json!({"op":"flood","x":20,"y":20,"color":0xff00ff00u32})).unwrap();
+    assert!(before.iter().zip(e.state.layers[0].pixels.iter()).all(|(a,b)|a>>24==b>>24));
+}
+
+#[test]
+fn affine_transform_has_content_bounds_and_exact_integer_motion(){
+    let mut e=Engine::new(64,48).unwrap();let pixels=Arc::make_mut(&mut e.state.layers[0].pixels);
+    for y in 10..30 {for x in 20..40{pixels[y*64+x]=if x<30{0xffee4433}else{0x802244ee};}}
+    let before=e.save().unwrap();let undo=e.undo.len();let preview=e.transform_snapshot();
+    assert_eq!(&preview[..6],&[1,0,20,10,40,30]);assert_eq!(undo,e.undo.len());assert_eq!(before,e.save().unwrap());
+    e.command(&json!({"op":"transformMatrix","matrix":[1,0,0,1,7,-3]})).unwrap();
+    assert_eq!(e.state.layers[0].pixels[7*64+27],0xffee4433);assert_eq!(e.state.layers[0].pixels[7*64+37],0x802244ee);assert_eq!(e.state.layers[0].pixels[10*64+20],0);
+    assert_eq!(e.undo.len(),undo+1);assert!(e.undo());assert_eq!(before,e.save().unwrap());assert!(e.redo());
+    e.command(&json!({"op":"layer","locked":true})).unwrap();let locked=e.save().unwrap();assert!(e.command(&json!({"op":"transformMatrix","matrix":[1,0,0,1,1,1]})).is_err());assert_eq!(locked,e.save().unwrap());
+}
+#[test]
+fn affine_rotation_selection_and_premultiplied_edges(){
+    let mut e=Engine::new(32,32).unwrap();let pixels=Arc::make_mut(&mut e.state.layers[0].pixels);pixels[10*32+8]=0xffff0000;pixels[20*32+20]=0xff00ff00;
+    e.selection=Some((0..1024).map(|i|i==10*32+8).collect());let preview=e.transform_snapshot();assert_eq!(&preview[2..6],&[8,10,9,11]);
+    let before=e.save().unwrap();e.command(&json!({"op":"transformMatrix","matrix":[0,1,-1,0,31,0]})).unwrap();
+    assert_eq!(e.state.layers[0].pixels[8*32+20],0xffff0000);assert_eq!(e.state.layers[0].pixels[20*32+20],0xff00ff00);
+    assert_eq!(e.state.layers[0].pixels[10*32+8],0);assert!(e.undo());assert_eq!(before,e.save().unwrap());
+    e.selection=None;Arc::make_mut(&mut e.state.layers[0].pixels).fill(0);Arc::make_mut(&mut e.state.layers[0].pixels)[10*32+8]=0xffff0000;
+    e.command(&json!({"op":"transformMatrix","matrix":[1,0,0,1,0.5,0]})).unwrap();
+    for x in [8,9]{let color=e.state.layers[0].pixels[10*32+x];assert_eq!(color&0xffffff,0xff0000);assert!((127..=128).contains(&(color>>24)));}
+    let state=e.save().unwrap();assert!(e.transform_affine([0.0;6]).is_err());assert!(e.transform_affine([f32::NAN,0.,0.,1.,0.,0.]).is_err());assert_eq!(state,e.save().unwrap());
+}
+#[test]
+fn transform_snapshot_planes_are_cropped_and_bounded(){
+    let mut e=Engine::new(2000,2000).unwrap();Arc::make_mut(&mut e.state.layers[0].pixels).fill(0xff112233);let data=e.transform_snapshot();
+    assert_eq!(&data[2..6],&[0,0,2000,2000]);let mut offset=6;let mut pixels=0;
+    for _ in 0..data[0]+1 {let n=(data[offset+4]*data[offset+5])as usize;pixels+=n;offset+=6+n;}
+    assert_eq!(offset,data.len());assert!(pixels<=6_000_000);assert!(data.len()<4_000_000);
+}
+
+#[test]
+fn eraser_library_uses_every_paint_footprint_and_preserves_rgb() {
+    for kind in [0,1,2,3,4,7,8,9,10,11,12,13,14] {
+        let mut paint=Engine::new(64,64).unwrap();let mut erase=Engine::new(64,64).unwrap();
+        Arc::make_mut(&mut erase.state.layers[0].pixels).fill(0xff123456);
+        let saved=erase.save().unwrap();
+        for (engine,k,color) in [(&mut paint,kind,0xffffffff),(&mut erase,64+kind,255)] {
+            engine.begin(Sample{x:32.0,y:32.0,pressure:0.7,tilt:0.3},Brush{kind:k,color,size:40.0,flow:0.8,opacity:0.7,stabilization:0.0,..Brush::default()});engine.end();
+        }
+        assert!(erase.state.layers[0].pixels.iter().any(|p|p>>24<255),"kind {kind}");
+        for (a,b) in paint.state.layers[0].pixels.iter().zip(erase.state.layers[0].pixels.iter()) {
+            assert!(((a>>24)+(b>>24)).abs_diff(255)<=1,"kind {kind}");assert_eq!(b&0xffffff,0x123456);
+        }
+        let erased=erase.save().unwrap();assert!(erase.undo());assert_eq!(erase.save().unwrap(),saved);assert!(erase.redo());assert_eq!(erase.save().unwrap(),erased);
+    }
+}
+#[test]
+fn eraser_library_hardness_selection_and_alpha_lock() {
+    let mut e=Engine::new(64,64).unwrap();Arc::make_mut(&mut e.state.layers[0].pixels).fill(0xff123456);
+    e.selection=Some((0..4096).map(|i|i%64<32).collect());
+    let brush=Brush{kind:64,color:0,size:48.0,pressure_size:0.0,stabilization:0.0,..Brush::default()};
+    let point=Sample{x:32.0,y:32.0,pressure:1.0,tilt:0.0};e.begin(point,brush);e.end();
+    assert_eq!(e.state.layers[0].pixels[32*64+40],0xff123456);
+    assert!((e.state.layers[0].pixels[32*64+12]>>24)>200);assert!((e.state.layers[0].pixels[32*64+31]>>24)<10);
+    e.state.layers[0].alpha_lock=true;let before=e.save().unwrap();e.begin(point,brush);e.end();assert_eq!(e.save().unwrap(),before);
+}

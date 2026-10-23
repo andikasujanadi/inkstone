@@ -60,7 +60,7 @@ class ToolIcon(context: Context, var symbol: String, private val action: () -> U
     }
     private val undo=shape {moveTo(-8f,-2f);cubicTo(8f,-7f,13f,6f,3f,8f);lineTo(-1f,8f);moveTo(-4f,-7f);lineTo(-9f,-2f);lineTo(-4f,2f)}
     private val dashes=DashPathEffect(floatArrayOf(2.2f,2.2f),0f)
-    init {isClickable=true;isFocusable=true;contentDescription=symbol;setOnClickListener{action()}}
+    init {isClickable=true;isFocusable=true;contentDescription=symbol;tooltipText=when(symbol){"Paint"->"Brush / Pen";"Erase"->"Eraser · tap again for hardness";"Select"->"Selection";"Transform"->"Move / resize";"Color"->"Colors · drag to fill";"Nodes"->"Edit vector points";else->symbol};setOnClickListener{action()}}
     override fun onDraw(c:Canvas) {
         val s=min(width,height)/48f
         c.save();c.translate(width/2f,height/2f);c.scale(s,s)
@@ -68,9 +68,13 @@ class ToolIcon(context: Context, var symbol: String, private val action: () -> U
         if(symbol in editingTools) {p.color=if(selectedAmount>.01f)Color.argb((255*selectedAmount).toInt(),44,166,235) else if(light)0x10000000 else 0x30000000;c.drawCircle(0f,0f,14f,p)}
         if(isFocused) {p.color=0x33888888;c.drawRoundRect(-21f,-21f,21f,21f,7f,7f,p)}
         val base=if(light)0xff454545.toInt() else 0xffc7c7c7.toInt()
-        fun channel(shift:Int)=(((base ushr shift) and 255)*(1-selectedAmount)+((0xff288cfa.toInt() ushr shift) and 255)*selectedAmount).toInt()
+        fun channel(shift:Int)=(((base ushr shift) and 255)*(1-selectedAmount)+((StudioColors.accent ushr shift) and 255)*selectedAmount).toInt()
         p.color=if(symbol in editingTools && selectedAmount>.5f)Color.WHITE else Color.rgb(channel(16),channel(8),channel(0));p.strokeWidth=1.7f;p.strokeCap=Paint.Cap.ROUND;p.strokeJoin=Paint.Join.ROUND
         when(symbol) {
+            "Line"->{p.style=Paint.Style.STROKE;p.strokeWidth=2f;c.drawLine(-9f,9f,9f,-9f,p)}
+            "Rectangle"->{p.style=Paint.Style.STROKE;p.strokeWidth=2f;c.drawRect(-10f,-8f,10f,8f,p)}
+            "Ellipse"->{p.style=Paint.Style.STROKE;p.strokeWidth=2f;c.drawOval(-10f,-8f,10f,8f,p)}
+            "Nodes"->{p.style=Paint.Style.STROKE;c.drawPath(Path().apply{moveTo(-10f,8f);quadTo(-4f,-13f,10f,-6f)},p);p.style=Paint.Style.FILL;for(point in listOf(PointF(-10f,8f),PointF(-4f,-4f),PointF(10f,-6f)))c.drawRect(point.x-2,point.y-2,point.x+2,point.y+2,p)}
             "Paint"->c.drawPath(brush,p)
             "Smudge"->c.drawPath(hand,p)
             "Erase"->c.drawPath(eraser,p)
@@ -80,7 +84,9 @@ class ToolIcon(context: Context, var symbol: String, private val action: () -> U
             "Layers"->{p.style=Paint.Style.STROKE;c.drawRoundRect(-4f,-11f,13f,6f,2f,2f,p);p.style=Paint.Style.FILL;c.drawRoundRect(-10f,-5f,7f,12f,2f,2f,p)}
             "Adjustments"->{p.style=Paint.Style.STROKE;p.strokeWidth=2.1f;c.drawLine(-6f,7f,5f,-5f,p);p.strokeWidth=1.2f;c.drawLine(-6f,-8f,-6f,-3f,p);c.drawLine(-8.5f,-5.5f,-3.5f,-5.5f,p);c.drawLine(6f,3f,6f,7f,p);c.drawLine(4f,5f,8f,5f,p);c.drawLine(4f,-10f,6f,-10f,p)}
             "Color"->{p.color=swatch;c.drawCircle(0f,0f,14f,p);p.style=Paint.Style.STROKE;p.color=if(light)0x30000000 else 0x30ffffff;p.strokeWidth=1f;c.drawCircle(0f,0f,14f,p)}
-            "Eyedropper"->{p.style=Paint.Style.STROKE;p.strokeWidth=1.8f;c.drawRoundRect(-7f,-8f,7f,8f,3f,3f,p)}
+            "Eyedropper"->{c.save();c.rotate(40f);p.style=Paint.Style.STROKE;p.strokeWidth=1.8f
+                c.drawPath(Path().apply{moveTo(-3f,-7f);lineTo(3f,-7f);lineTo(3f,6f);lineTo(0f,11f);lineTo(-3f,6f);close()},p)
+                p.style=Paint.Style.FILL;c.drawRoundRect(-5f,-13f,5f,-6f,3f,3f,p);c.restore()}
             "Undo","Redo"->{p.style=Paint.Style.STROKE;if(symbol=="Redo")c.scale(-1f,1f);c.drawPath(undo,p)}
             "Canvas"->{p.style=Paint.Style.STROKE;c.drawRoundRect(-11f,-8f,11f,8f,2f,2f,p);c.drawLine(-6f,4f,0f,-3f,p);c.drawLine(0f,-3f,7f,4f,p)}
             "NewCanvas"->{c.drawRoundRect(-12f,-6f,12f,10f,3f,3f,p);c.drawRoundRect(-9f,-10f,9f,-7f,1f,1f,p);p.color=if(light)0xffe9e9e9.toInt() else 0xff222222.toInt();p.style=Paint.Style.STROKE;c.drawLine(-9f,1f,-1f,1f,p);c.drawLine(-5f,-3f,-5f,5f,p)}
@@ -121,7 +127,7 @@ class VerticalSlider(context: Context, private val label: String, initial: Float
     private val p=Paint(Paint.ANTI_ALIAS_FLAG)
     init{isFocusable=true;isClickable=true;contentDescription=label}
     override fun onDraw(c:Canvas){val d=resources.displayMetrics.density
-        p.color=0xff292e31.toInt();c.drawRoundRect(3*d,0f,width-3*d,height.toFloat(),StudioShape.CORNER_DP*d,StudioShape.CORNER_DP*d,p)
+        p.color=StudioColors.track;c.drawRoundRect(3*d,0f,width-3*d,height.toFloat(),StudioShape.CORNER_DP*d,StudioShape.CORNER_DP*d,p)
         bookmark?.let{p.color=0xff4cb5ed.toInt();val y=height-10*d-it*(height-20*d);c.drawRect(2*d,y-d,7*d,y+d,p)}
         val y=thumbY;p.color=0xffc8d2d6.toInt();c.drawRoundRect(2*d,y-6*d,width-2*d,y+6*d,StudioShape.CORNER_DP*d,StudioShape.CORNER_DP*d,p)
         p.style=Paint.Style.STROKE;p.strokeWidth=d;p.color=0xff879599.toInt();c.drawRoundRect(2*d,y-6*d,width-2*d,y+6*d,StudioShape.CORNER_DP*d,StudioShape.CORNER_DP*d,p);p.style=Paint.Style.FILL
@@ -141,15 +147,15 @@ class VerticalSlider(context: Context, private val label: String, initial: Float
     override fun performClick():Boolean{super.performClick();return true}
 }
 
-class BrushPreview(context:Context,val preset:BrushPreset,var chosen:Boolean=false):View(context){
+class BrushPreview(context:Context,val preset:BrushPreset,var chosen:Boolean=false,val eraser:Boolean=false):View(context){
     private val p=Paint(Paint.ANTI_ALIAS_FLAG)
     private var stroke:Bitmap?=null
-    init{minimumHeight=(70*resources.displayMetrics.density).toInt();contentDescription="${preset.name}, ${preset.group}"}
+    init{minimumHeight=(70*resources.displayMetrics.density).toInt();contentDescription="${preset.name}, ${preset.group}${if(eraser)", eraser" else ""}"}
     override fun onSizeChanged(w:Int,h:Int,oldw:Int,oldh:Int){
         if(w<=0||h<=0)return
         stroke?.recycle();stroke=Bitmap.createBitmap(w,h,Bitmap.Config.ARGB_8888)
         val c=Canvas(stroke!!);val d=resources.displayMetrics.density
-        p.color=0xffedf3f4.toInt();p.style=Paint.Style.FILL
+        p.color=if(eraser)0xff273440.toInt() else 0xffedf3f4.toInt();p.style=Paint.Style.FILL
         p.maskFilter=if(preset.kind in listOf(2,8,9))BlurMaskFilter((if(preset.kind==2)12 else if(preset.kind==9)2 else 6)*d,BlurMaskFilter.Blur.NORMAL) else if(preset.kind==4)BlurMaskFilter(3*d,BlurMaskFilter.Blur.NORMAL) else null
         for(i in 0..140){val t=i/140f;val x=22*d+t*(w-44*d);val y=h*.72f-t*14*d+sin(t*2*Math.PI).toFloat()*2*d
             val radius=if(preset.kind in listOf(0,1)&&preset.size<24) (1.3f+sin(t*Math.PI).toFloat()*1.6f)*d else (12+sin(t*Math.PI).toFloat()*4)*d
@@ -158,8 +164,10 @@ class BrushPreview(context:Context,val preset:BrushPreset,var chosen:Boolean=fal
         };p.maskFilter=null;p.alpha=255
     }
     override fun onDraw(c:Canvas){val d=resources.displayMetrics.density
-        p.style=Paint.Style.FILL;p.color=if(chosen)0xff37a9ec.toInt() else Color.TRANSPARENT;c.drawRoundRect(0f,0f,width.toFloat(),height.toFloat(),StudioShape.CORNER_DP*d,StudioShape.CORNER_DP*d,p)
-        p.alpha=255;stroke?.let{c.drawBitmap(it,0f,0f,p)}
+        p.style=Paint.Style.FILL;p.color=if(chosen)StudioColors.accentSoft else Color.TRANSPARENT;c.drawRoundRect(0f,0f,width.toFloat(),height.toFloat(),StudioShape.CORNER_DP*d,StudioShape.CORNER_DP*d,p)
+        p.alpha=255
+        if(eraser){p.color=0xffc6d1d7.toInt();c.drawRoundRect(4*d,24*d,width-4*d,height-4*d,StudioShape.CORNER_DP*d,StudioShape.CORNER_DP*d,p)}
+        stroke?.let{c.drawBitmap(it,0f,0f,p)}
         p.color=Color.WHITE;p.textSize=11*d;p.typeface=Typeface.create("sans-serif-medium",Typeface.NORMAL);c.drawText(preset.name,7*d,15*d,p)
         if(chosen){p.style=Paint.Style.STROKE;p.strokeWidth=1.5f*d;p.color=0xff8bd7ff.toInt();c.drawRoundRect(d,d,width-d,height-d,(StudioShape.CORNER_DP-1)*d,(StudioShape.CORNER_DP-1)*d,p);p.style=Paint.Style.FILL}
     }
