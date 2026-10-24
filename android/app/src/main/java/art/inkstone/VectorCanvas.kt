@@ -18,10 +18,12 @@ internal class VectorCanvas(private val activity:MainActivity,val document:Vecto
     var onDismissPanel:()->Boolean={false}
     private val density=resources.displayMetrics.density
     private val paint=Paint(Paint.ANTI_ALIAS_FLAG)
-    private var zoom=1f;private var pan=PointF();private var fitted=false
+    private var zoom=1f;private var rotation=0f;private var pan=PointF();private var fitted=false
+    private val historyTap=MultiFingerTap(12*resources.displayMetrics.density)
     private var pointer=-1;private var pen=false
     private var draft:VectorObject?=null
     private var before:ByteArray?=null
+    var joiningPaths=false;private set
     var addingAnchor=false;private set
     private var mode=""
     private var nodeOriginal=emptyList<PointF>()
@@ -29,18 +31,18 @@ internal class VectorCanvas(private val activity:MainActivity,val document:Vecto
     private var filtered=PointF()
     private var sampleTime=0L
     private var origin=PointF();private var originalMatrix=Matrix();private var anchor=PointF();private var node=-1
-    private var gestureDistance=0f;private var gestureCenter=PointF();private var multi=false
+    private var gestureDistance=0f;private var gestureAngle=0f;private var gestureCenter=PointF();private var multi=false
     val busy get()=pointer>=0 || multi
     val selected get()=document.objectById(selectedId)
     init{isFocusable=true;contentDescription="Vector drawing canvas"}
-    private fun screenMatrix()=Matrix().apply{setScale(zoom,zoom);postTranslate((width-document.width*zoom)/2+pan.x,(height-document.height*zoom)/2+pan.y)}
+    private fun screenMatrix()=Matrix().apply{postTranslate(-document.width/2f,-document.height/2f);postScale(zoom,zoom);postRotate(rotation);postTranslate(width/2f+pan.x,height/2f+pan.y)}
     internal fun pagePoint(x:Float,y:Float):PointF {val inverse=Matrix();screenMatrix().invert(inverse);val p=floatArrayOf(x,y);inverse.mapPoints(p);return PointF(p[0],p[1])}
     internal fun viewPoint(x:Float,y:Float):PointF {val p=floatArrayOf(x,y);screenMatrix().mapPoints(p);return PointF(p[0],p[1])}
-    fun fit(){if(width<=0 || height<=0)return;zoom=min((width-64*density)/document.width,(height-64*density)/document.height).coerceAtLeast(.01f);pan=PointF();fitted=true;invalidate()}
+    fun fit(){if(width<=0 || height<=0)return;zoom=min((width-64*density)/document.width,(height-64*density)/document.height).coerceAtLeast(.01f);pan=PointF();rotation=0f;fitted=true;invalidate()}
     override fun onSizeChanged(w:Int,h:Int,oldw:Int,oldh:Int){if(!fitted || oldw!=w || oldh!=h)fit()}
     fun snapshot():ByteArray=before?.clone()?:document.encode()
     fun cancelGesture(){before?.let{document.restore(it)};before=null;draft=null;pointer=-1;mode="";multi=false;invalidate();onSelection()}
-    fun changeTool(value:String){addingAnchor=false;cancelGesture();if(value!="Nodes")selectedNode=null;tool=value;invalidate();onSelection()}
+    fun changeTool(value:String){joiningPaths=false;addingAnchor=false;cancelGesture();if(value!="Nodes")selectedNode=null;tool=value;invalidate();onSelection()}
     fun undo(){addingAnchor=false;cancelGesture();if(document.undo()){selectedId=null;selectedNode=null;onChanged()};invalidate();onSelection()}
     fun redo(){addingAnchor=false;cancelGesture();if(document.redo()){selectedId=null;selectedNode=null;onChanged()};invalidate();onSelection()}
     fun edit(change:()->Unit){cancelGesture();runCatching{document.edit(change)}.onFailure{activity.message(it.message?:"Could not change object")}.onSuccess{onChanged()};invalidate();onSelection()}
@@ -124,8 +126,48 @@ internal class VectorCanvas(private val activity:MainActivity,val document:Vecto
         before=document.encode();if(obj.kind=="Pen")obj.toBezier();node=picked;mode=if(handle)"handle"else"node";origin=point;nodeMoved=false
         nodeOriginal=obj.points.map{PointF(it.x,it.y)};onSelection();invalidate()
     }
+    fun closePath(){
+        val obj=selected?:return
+        if(document.owner(obj.id)?.locked==true){activity.message("This layer is locked");return}
+        if(obj.kind !in listOf("Pen","Line","Bezier"))return
+        edit{obj.closed=!obj.closed;if(!obj.closed)obj.fill=null;obj.geometryChanged()};joiningPaths=false
+    }
+    fun joinPathMode(){
+        cancelGesture();val obj=selected?:return
+        if(obj.isClosed || document.owner(obj.id)?.locked==true){activity.message("Choose an unlocked open path");return}
+        addingAnchor=false;joiningPaths=!joiningPaths;onSelection()
+        if(joiningPaths)activity.message("Tap an endpoint of another path to join it")
+    }
+    private fun joinAt(point:PointF){
+        val first=selected?:return;val layer=document.owner(first.id)?:return
+        val candidates=layer.objects.filter{it.id!=first.id && !it.isClosed && it.kind in listOf("Pen","Line","Bezier")}
+        val hit=candidates.flatMap{o->listOf(0,o.points.lastIndex).map{i->Triple(o,i,VectorGeometry.mapped(o,o.points[i]))}}
+            .filter{hypot(it.third.x-point.x,it.third.y-point.y)<=28*density/zoom}.minByOrNull{hypot(it.third.x-point.x,it.third.y-point.y)}
+        if(hit==null){activity.message("Tap an endpoint on another open path in the same layer");return}
+        val other=hit.first;val reverseFirst=selectedNode==0;val reverseOther=hit.second!=0
+        edit{
+            require(!layer.locked){"This layer is locked"}
+            first.toBezier();other.toBezier()
+            if(reverseFirst)first.points.reverse()
+            val inverse=Matrix();check(first.matrix.invert(inverse))
+            val incoming=(if(reverseOther)other.points.asReversed()else other.points).map{p->VectorGeometry.mapped(other,p).let{mapped->val xy=floatArrayOf(mapped.x,mapped.y);inverse.mapPoints(xy);PointF(xy[0],xy[1])}}
+            require(first.points.size+incoming.size+2<=12289){"Joined path exceeds point limit"}
+            val a=first.points.last();val b=incoming.first()
+            first.points.add(PointF(a.x+(b.x-a.x)/3,a.y+(b.y-a.y)/3));first.points.add(PointF(a.x+(b.x-a.x)*2/3,a.y+(b.y-a.y)*2/3));first.points.addAll(incoming)
+            first.geometryChanged();layer.objects.remove(other)
+        }
+        joiningPaths=false;selectedNode=null;onSelection();invalidate()
+    }
+    fun fillAt(x:Float,y:Float,color:Int):Boolean{
+        cancelGesture();val point=pagePoint(x,y)
+        if(point.x !in 0f..document.width.toFloat() || point.y !in 0f..document.height.toFloat())return false
+        val obj=document.layers.asReversed().filter{it.visible && it.opacity>0}.flatMap{it.objects.asReversed()}.firstOrNull{it.containsInterior(point)}
+        if(obj==null){activity.message("Drop inside a closed path. Use Nodes → Close path for freehand lines.");return false}
+        if(document.owner(obj.id)?.locked==true){activity.message("This layer is locked");return false}
+        edit{obj.fill=color};return true
+    }
     private fun begin(point:PointF){
-        if(tool=="Nodes"){if(addingAnchor)addAnchor(point)else beginNodes(point);return}
+        if(tool=="Nodes"){if(joiningPaths)joinAt(point)else if(addingAnchor)addAnchor(point)else beginNodes(point);return}
         if(tool=="Select"){
             var obj=selected
             if(obj!=null){
@@ -189,21 +231,23 @@ internal class VectorCanvas(private val activity:MainActivity,val document:Vecto
         before=null;draft=null;pointer=-1;mode="";invalidate();onSelection()
     }
     override fun onTouchEvent(e:MotionEvent):Boolean {
+        val tappedFingers=historyTap.observe(e)
         parent.requestDisallowInterceptTouchEvent(true)
         val hasPen=(0 until e.pointerCount).any{e.getToolType(it) in listOf(MotionEvent.TOOL_TYPE_STYLUS,MotionEvent.TOOL_TYPE_ERASER)}
         if(e.getToolType(0)==MotionEvent.TOOL_TYPE_ERASER){if(e.actionMasked==MotionEvent.ACTION_DOWN){cancelGesture();activity.message("Use Select → Object → Delete to remove a vector object")};return true}
-        if(activity.penOnlyInput && !hasPen && e.actionMasked!=MotionEvent.ACTION_CANCEL)return true
         if(!e.x.isFinite() || !e.y.isFinite()){cancelGesture();return true}
         when(e.actionMasked){
-            MotionEvent.ACTION_DOWN->{if(onDismissPanel())return true;activity.deferAutosave();pointer=e.getPointerId(0);pen=hasPen;mode="";begin(pagePoint(e.x,e.y))}
-            MotionEvent.ACTION_POINTER_DOWN->{if(pen && pointer>=0)return true;cancelGesture();multi=true;gestureCenter=PointF((e.getX(0)+e.getX(1))/2,(e.getY(0)+e.getY(1))/2);gestureDistance=hypot(e.getX(1)-e.getX(0),e.getY(1)-e.getY(0))}
+            MotionEvent.ACTION_DOWN->{if(onDismissPanel())return true;activity.deferAutosave();pointer=e.getPointerId(0);pen=hasPen;mode="";if(hasPen || !activity.penOnlyInput || tool in listOf("Nodes","Select"))begin(pagePoint(e.x,e.y))}
+            MotionEvent.ACTION_POINTER_DOWN->{if(pen && pointer>=0)return true;cancelGesture();multi=true;gestureCenter=PointF((e.getX(0)+e.getX(1))/2,(e.getY(0)+e.getY(1))/2);gestureDistance=hypot(e.getX(1)-e.getX(0),e.getY(1)-e.getY(0));gestureAngle=atan2(e.getY(1)-e.getY(0),e.getX(1)-e.getX(0))}
             MotionEvent.ACTION_MOVE->{
                 if(multi && e.pointerCount>=2){val mid=PointF((e.getX(0)+e.getX(1))/2,(e.getY(0)+e.getY(1))/2);val distance=hypot(e.getX(1)-e.getX(0),e.getY(1)-e.getY(0));val page=pagePoint(gestureCenter.x,gestureCenter.y)
+                    val angle=atan2(e.getY(1)-e.getY(0),e.getX(1)-e.getX(0));var delta=angle-gestureAngle
+                    while(delta>Math.PI)delta-=(2*Math.PI).toFloat();while(delta< -Math.PI)delta+=(2*Math.PI).toFloat();rotation+=delta*180f/Math.PI.toFloat();gestureAngle=angle
                     if(gestureDistance>0)zoom=(zoom*distance/gestureDistance).coerceIn(.01f,64f);val now=viewPoint(page.x,page.y);pan.offset(mid.x-now.x,mid.y-now.y);gestureCenter=mid;gestureDistance=distance;invalidate();return true}
                 val index=e.findPointerIndex(pointer);if(index>=0 && !multi){if(draft?.kind=="Pen")for(h in 0 until e.historySize)move(pagePoint(e.getHistoricalX(index,h),e.getHistoricalY(index,h)),e.getHistoricalEventTime(h));move(pagePoint(e.getX(index),e.getY(index)),e.eventTime)}
             }
             MotionEvent.ACTION_POINTER_UP->{if(pen && e.getPointerId(e.actionIndex)==pointer){move(pagePoint(e.getX(e.actionIndex),e.getY(e.actionIndex)),e.eventTime,release=true);finish()}}
-            MotionEvent.ACTION_UP->{if(!multi && pointer>=0){move(pagePoint(e.x,e.y),e.eventTime,release=true);finish()};multi=false;pointer=-1;performClick()}
+            MotionEvent.ACTION_UP->{if(multi){when(tappedFingers){2->if(activity.twoFingerUndo)undo();3->if(activity.threeFingerRedo)redo()}};if(!multi && tappedFingers==0 && pointer>=0){move(pagePoint(e.x,e.y),e.eventTime,release=true);finish()};multi=false;pointer=-1;performClick()}
             MotionEvent.ACTION_CANCEL->{cancelGesture();activity.scheduleSave()}
         };return true
     }

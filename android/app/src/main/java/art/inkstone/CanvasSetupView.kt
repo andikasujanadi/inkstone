@@ -102,7 +102,7 @@ internal class CanvasSetupView(private val activity:MainActivity,initialMode:Str
                 details.addView(label("Vector uses monoline paths, shapes and editable objects. Airbrush and smudge remain in Raster mode.",14f).apply{maxLines=4},LinearLayout.LayoutParams(-1,dp(140)))}
             "Dimensions"->{
                 val dimensions=group();numberRow(dimensions,"Width");numberRow(dimensions,"Height")
-                val resolution=group();numberRow(resolution,"DPI");numberRow(resolution,"Maximum Layers",false)
+                val resolution=group();numberRow(resolution,"DPI");numberRow(resolution,"Layers",false)
                 error=label("",12f,0xffff7970.toInt());details.addView(error,LinearLayout.LayoutParams(-1,dp(34)))
                 addKeypad(w,h,keypadHeight,side,narrow);update()
             }
@@ -132,7 +132,7 @@ internal class CanvasSetupView(private val activity:MainActivity,initialMode:Str
     }
     private fun update(){
         for((name,v)in values){
-            v.text=if(name=="Maximum Layers"){min(64,(67_108_864.0/(pixelsW*pixelsH)).toInt()).coerceAtLeast(0).toString()}else (if(name==field)entry else display(name)) + if(name=="DPI")"" else when(unit){"Pixels"->" px";"Millimetres"->" mm";"Centimetres"->" cm";else->" in"}
+            v.text=if(name=="Layers"){"Memory dependent"}else (if(name==field)entry else display(name)) + if(name=="DPI")"" else when(unit){"Pixels"->" px";"Millimetres"->" mm";"Centimetres"->" cm";else->" in"}
             v.setTextColor(if(name==field)Color.WHITE else 0xffa8a8a8.toInt())
         }
         unitButtons.forEach{(name,v)->v.background=round(if(name==unit)0xffcccccc.toInt() else 0xff383838.toInt(),StudioShape.CORNER_DP);v.setTextColor(if(name==unit)Color.BLACK else 0xffbdbdbd.toInt())}

@@ -6,16 +6,20 @@ Inkstone is an open-source drawing app for Android tablets and pressure-sensitiv
 
 ![Inkstone tablet editor](artifacts/editor-tablet.png)
 
+**0.1.8 early-development preview:** persistent custom color palettes, layer masks, symmetry, editable QuickShape, a reference companion, and layered PSD import. Includes first-tap tool libraries, artwork loading feedback, touch navigation in pen-only mode, and more efficient layer/undo storage. Fixed layer-count caps have been removed; capacity still depends on memory. See [workflow instructions](docs/LOCAL_WORKFLOWS.md).
+
+**Known issue:** Vector color selection and drag-to-fill can fail on devices even when the color code changes. This is recorded for a later fix; see [known issues](docs/KNOWN_ISSUES.md).
+
 ## Download
 
-Get the **[0.1.7 preview APK](https://github.com/bramastahartono20/inkstone/releases/tag/v0.1.7)** from GitHub Releases. Requires Android 8.0 or later; ARM64 and x86-64 are included. Enable installation from the app used to open the APK when Android asks.
+Get the **[0.1.8 preview APK](https://github.com/bramastahartono20/inkstone/releases/tag/v0.1.8)** from GitHub Releases. Requires Android 8.0 or later; ARM64 and x86-64 are included. Enable installation from the app used to open the APK when Android asks.
 
 The preview uses package `art.inkstone.preview`. Install over an existing preview to retain local artwork. Artwork lives in app-private storage: export editable `.inkstone` backups before uninstalling or clearing app data. No account, server, internet permission, analytics, or subscription is required.
 
 ## What you can try
 
-- **Draw, smudge and erase:** 46 procedural presets, pressure controls, flow, stabilization and a global pressure toggle. Eraser has the same preset library, inverted previews and separate brush settings. Tap the active Eraser icon again to open its library; the library's + button opens settings including edge hardness.
-- **ColorDrop:** drag the active color into an enclosed area, pause for the fill preview, then slide left/right to adjust threshold. Release to commit in one Undo step. Color selection includes a wheel, a square picker, hex/RGB values and palettes.
+- **Draw, smudge and erase:** 46 procedural presets, pressure controls, flow, stabilization and a global pressure toggle. Eraser has the same preset library, inverted previews and separate brush settings. Tap the Eraser icon to select it and open its library; the library's + button opens settings including edge hardness.
+- **ColorDrop:** drag the active color into an enclosed area, pause for the fill preview, then slide left/right to adjust threshold. Release to commit in one Undo step. Color selection includes a wheel, a square picker, hex/RGB values and palettes. In Raster mode, drag the rectangular preview at the top of Colors onto the palette to save it. Open **Palette → + New palette** or **Palettes → New palette** to create a named palette; custom palettes stay saved across artworks and app restarts.
 - **Layers:** add, rename, duplicate, reorder, lock, hide, adjust opacity, use alpha lock/clipping and fifteen blend modes. Swipe left on a layer for actions.
 - **Select and transform:** freehand/rectangle/ellipse selection, live corner and edge resizing, free rotation, flips and two-finger object transforms. Inserted images enter Transform automatically. Tap Done to apply.
 - **Pen and touch controls:** pen-only input, control palm protection, handedness, hover cursor, canvas-position lock, hold-to-shape fitting and gesture Undo/Redo.
@@ -32,7 +36,7 @@ The preview uses package `art.inkstone.preview`. Install over an existing previe
 | PSD | Separate raster layers, names, opacity, visibility, clipping and blend metadata; 8-bit RGB |
 | SVG | Vector paths, shapes, transforms and named layer groups; Vector mode only |
 
-Use **Save** for project saving, Photo Gallery PNG/JPG output, or exports to a chosen folder. PSD exports from Vector mode rasterize each layer; keep `.inkstone` or SVG for editable vector geometry. PSD import, CMYK, smart objects and PSD vector shapes are unavailable. See [export details](docs/EXPORT_FORMATS.md).
+Use **Save** for project saving, Photo Gallery PNG/JPG output, or exports to a chosen folder. PSD exports from Vector mode rasterize each layer; keep `.inkstone` or SVG for editable vector geometry. The 0.1.8 preview imports supported 8-bit RGB layered PSDs. CMYK, editable smart objects and PSD vector shapes remain unavailable. See [export details](docs/EXPORT_FORMATS.md).
 
 ## Performance and limitations
 
@@ -54,7 +58,7 @@ export JAVA_HOME=/path/to/jdk-21
 bash scripts/build-android.sh
 ```
 
-Output: `releases/inkstone-0.1.7-debug.apk`. Open `android/` in Android Studio to edit or install on a device. Rebuild native libraries with `bash scripts/build-native.sh` after changing Rust. Preview APKs use debug signing; distribution requires maintaining the same signing certificate for updates.
+Output from the current working tree: `releases/inkstone-0.1.8-debug.apk`. Open `android/` in Android Studio to edit or install on a device. Rebuild native libraries with `bash scripts/build-native.sh` after changing Rust. Preview APKs use debug signing; distribution requires maintaining the same signing certificate for updates.
 
 ## Verify
 

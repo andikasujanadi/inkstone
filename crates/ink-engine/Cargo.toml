@@ -9,10 +9,11 @@ name = "inkstone"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-serde = { version = "1", features = ["derive"] }
+serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
 jni = "0.21"
 wgpu = { version = "27", default-features = false, features = ["std", "vulkan", "metal", "wgsl"] }
+flate2 = "1"
 pollster = "0.4"
 bytemuck = { version = "1", features = ["derive"] }
 

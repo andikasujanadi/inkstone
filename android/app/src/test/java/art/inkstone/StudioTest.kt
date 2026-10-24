@@ -166,7 +166,7 @@ class StudioTest {
         fun touch(action:Int,x:Float,y:Float){val event=MotionEvent.obtain(0,10,action,x,y,0);canvas.dispatchTouchEvent(event);event.recycle()}
         for(i in 0..80){val t=i*2*Math.PI/80;touch(if(i==0)MotionEvent.ACTION_DOWN else MotionEvent.ACTION_MOVE,500+90*kotlin.math.cos(t).toFloat(),350+90*kotlin.math.sin(t).toFloat())}
         shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(700))
-        touch(MotionEvent.ACTION_UP,590f,350f);until{session.info.optInt("undo")==1}
+        touch(MotionEvent.ACTION_UP,590f,350f);assertTrue(canvas.quickShapeEdit.released);click(e,"Done");until{session.info.optInt("undo")==1}
         render(e,"quick-shape-circle");session.command("undo");until{session.info.optInt("undo")==0}
         a.customCanvas();val setup=checkNotNull(a.canvasSetup)
         render(setup,"custom-canvas-wide",1280,800);click(setup,"Colour profile");click(setup,"Dimensions")
@@ -390,7 +390,8 @@ class StudioTest {
         val slider=checkNotNull(named(e,"Brush size"));val x=dock.left+slider.left+12f;val y=dock.top+slider.top+slider.height*.25f
         val original=s.size
         touch(MotionEvent.TOOL_TYPE_FINGER,MotionEvent.ACTION_DOWN,x,y);touch(MotionEvent.TOOL_TYPE_FINGER,MotionEvent.ACTION_UP,x,y)
-        assertEquals(original,s.size,.001f)
+        assertTrue(s.size>original);s.size=original
+        shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(800))
         touch(MotionEvent.TOOL_TYPE_STYLUS,MotionEvent.ACTION_DOWN,x,y);touch(MotionEvent.TOOL_TYPE_STYLUS,MotionEvent.ACTION_UP,x,y)
         assertTrue(s.size>original);s.size=12f
         touch(MotionEvent.TOOL_TYPE_STYLUS,MotionEvent.ACTION_DOWN,600f,350f)
@@ -398,11 +399,12 @@ class StudioTest {
         touch(MotionEvent.TOOL_TYPE_STYLUS,MotionEvent.ACTION_UP,700f,350f)
         until{s.info.getInt("undo")==1}
         s.penOnly=false
-        input(e,MotionEvent.TOOL_TYPE_STYLUS,MotionEvent.ACTION_HOVER_MOVE,300f,300f,true)
         val before=s.size
+        touch(MotionEvent.TOOL_TYPE_STYLUS,MotionEvent.ACTION_DOWN,600f,400f)
         touch(MotionEvent.TOOL_TYPE_FINGER,MotionEvent.ACTION_DOWN,x,y);touch(MotionEvent.TOOL_TYPE_FINGER,MotionEvent.ACTION_UP,x,y)
         assertEquals(before,s.size,.001f)
-        shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(750))
+        touch(MotionEvent.TOOL_TYPE_STYLUS,MotionEvent.ACTION_UP,600f,400f)
+        input(e,MotionEvent.TOOL_TYPE_STYLUS,MotionEvent.ACTION_HOVER_MOVE,300f,300f,true)
         touch(MotionEvent.TOOL_TYPE_FINGER,MotionEvent.ACTION_DOWN,x,y);touch(MotionEvent.TOOL_TYPE_FINGER,MotionEvent.ACTION_UP,x,y)
         assertTrue(s.size>before)
         assertTrue(checkNotNull(named(e,"Undo")).top<dock.top)
@@ -426,7 +428,7 @@ class StudioTest {
     @Test fun eraserLibrarySharesPresetsAndKeepsDrawingBrushSeparate(){
         val controller=Robolectric.buildActivity(MainActivity::class.java).setup();val a=controller.get();a.newCanvas(160,120)
         val e=checkNotNull(a.editor);val s=checkNotNull(a.session);s.choose(brushPresets.first{it.name=="Technical Pen"});s.size=9f
-        render(e,"eraser-library-before");click(e,"Erase");click(e,"Erase");assertNotNull(named(e,"Eraser Library"))
+        render(e,"eraser-library-before");click(e,"Erase");assertNotNull(named(e,"Eraser Library"))
         click(e,"Airbrushing");click(e,"Soft Brush, Airbrushing, eraser");assertEquals("Soft Brush",s.preset.name);s.size=70f
         render(e,"eraser-library-soft");e.dismissPanel();click(e,"Paint");assertEquals("Technical Pen",s.preset.name);assertEquals(9f,s.size,0f)
         click(e,"Erase");assertEquals("Soft Brush",s.preset.name);assertEquals(70f,s.size,0f)
@@ -440,7 +442,7 @@ class StudioTest {
         render(e,"feedback2-raster-portrait",400,820)
         assertEquals(88,e.canvas.top);val history=checkNotNull(named(e,"History and save"));assertTrue(history.top>700)
         RuntimeEnvironment.setQualifiers("w1280dp-h800dp-land-mdpi");controller.configurationChange();render(e,"feedback2-raster-rotated",1280,800);assertEquals(44,e.canvas.top);assertEquals(0,checkNotNull(named(e,"History and save")).top)
-        click(e,"Erase");click(e,"Erase");click(e,"Add");click(e,"Edge hardness");assertNotNull(named(e,"Hardness"));click(e,"Soft");assertEquals(0f,s.eraserHardness,0f)
+        click(e,"Erase");click(e,"Add");click(e,"Edge hardness");assertNotNull(named(e,"Hardness"));click(e,"Soft");assertEquals(0f,s.eraserHardness,0f)
         render(e,"feedback2-eraser");e.dismissPanel()
         val image=Bitmap.createBitmap(30,20,Bitmap.Config.ARGB_8888).apply{eraseColor(0xffef8040.toInt())};var imported=false
         s.import(image){e.startLayerTransform();imported=true};image.recycle();until{imported};assertEquals("Transform",s.tool)

@@ -21,6 +21,7 @@ class PaintCanvas(context: Context, val session: DrawingSession) : View(context)
     private var drawing = false
     private var pen = false
     private var multi = false
+    private val historyTap=MultiFingerTap(12*resources.displayMetrics.density)
     private var maxPointers = 0
     private var downTime = 0L
     private var downX = 0f; private var downY = 0f
@@ -31,6 +32,8 @@ class PaintCanvas(context: Context, val session: DrawingSession) : View(context)
     private var hover: PointF? = null
     private val selectionPoints = mutableListOf<PointF>()
     private var selectionPath: Path? = null
+    internal val quickShapeEdit=QuickShapeEdit(this,session)
+    internal fun finishQuickShape(cancel:Boolean=false){quickShapeEdit.finish(cancel)}
     internal val rasterTransform=RasterTransform(this,session)
     internal val transformZoom get()=zoom
     internal fun transformDocumentPoint(x:Float,y:Float)=documentPoint(x,y)
@@ -48,26 +51,24 @@ class PaintCanvas(context: Context, val session: DrawingSession) : View(context)
     var onInputDevice: (MotionEvent) -> Unit = {}
     private val shapePoints=mutableListOf<PointF>()
     private var snapped=false
+    private var shapeEligible=true
     private var holdX=0f;private var holdY=0f
     private val shapeHold=Runnable {
-        if(drawing && !multi && !snapped && session.quickShape && session.tool=="Paint"){
+        if(drawing && shapeEligible && !multi && !snapped && session.quickShape && session.tool=="Paint"){
             QuickShape.fit(shapePoints.filterIndexed{i,_->i%max(1,shapePoints.size/256)==0})?.let{fit->
-                session.stroke(3,floatArrayOf())
-                val old=session.stabilization;session.stabilization=0f
-                session.stroke(0,fit.samples.copyOfRange(0,4))
-                session.stroke(1,fit.samples.copyOfRange(4,fit.samples.size))
-                session.stabilization=old;snapped=true;onGesture(fit.name+" created")
+                quickShapeEdit.start(fit);snapped=true;onGesture(fit.name+" created · drag handles to edit")
             }
         }
     }
     private fun recordShape(samples:FloatArray,x:Float,y:Float){
-        if(!session.quickShape||session.tool!="Paint"||snapped)return
+        if(!shapeEligible||!session.quickShape||session.tool!="Paint"||snapped)return
         for(i in samples.indices step 4){val p=PointF(samples[i],samples[i+1]);if(shapePoints.isEmpty()||hypot(p.x-shapePoints.last().x,p.y-shapePoints.last().y)>1f)shapePoints.add(p)}
         if(shapePoints.size>4096){val reduced=shapePoints.filterIndexed{i,_->i%2==0};shapePoints.clear();shapePoints.addAll(reduced)}
         if(hypot(x-holdX,y-holdY)>3*dp){holdX=x;holdY=y;removeCallbacks(shapeHold);postDelayed(shapeHold,650)}
     }
     private val longPress = Runnable {
         if (session.holdEyedropper && !multi && !pen && !moved && activePointer >= 0 && session.tool == "Paint") {
+            if(quickShapeEdit.active)return@Runnable
             session.stroke(3, floatArrayOf()); drawing = false; picking = true
             pick(downX, downY)
         }
@@ -152,6 +153,14 @@ class PaintCanvas(context: Context, val session: DrawingSession) : View(context)
             var x = 0f; while (x <= w) { canvas.drawLine(x, 0f, x, h, paint); x += 80f }
             var y = 0f; while (y <= h) { canvas.drawLine(0f, y, w, y, paint); y += 80f }
         }
+        if(session.symmetryMode!="Off"){
+            paint.color=0x997fc7ef.toInt();paint.strokeWidth=1.2f*dp/zoom;paint.style=Paint.Style.STROKE
+            val mode=session.symmetryMode
+            if(mode in listOf("Vertical","Quadrant","Radial 4"))canvas.drawLine(w/2,0f,w/2,h,paint)
+            if(mode in listOf("Horizontal","Quadrant","Radial 4"))canvas.drawLine(0f,h/2,w,h/2,paint)
+            if(mode=="Radial 4"){paint.color=0x557fc7ef;canvas.drawLine(0f,h/2-w/2,w,h/2+w/2,paint);canvas.drawLine(0f,h/2+w/2,w,h/2-w/2,paint)}
+            paint.style=Paint.Style.FILL
+        }
         if (selectionPath != null && !rasterTransform.displaying) {
             paint.color=Color.argb((session.selectionVisibility*255).toInt(),70,90,100)
             paint.style=Paint.Style.FILL;canvas.drawPath(selectionPath!!,paint)
@@ -162,6 +171,7 @@ class PaintCanvas(context: Context, val session: DrawingSession) : View(context)
             canvas.drawPath(selectionPath!!, paint); paint.pathEffect = null; paint.style = Paint.Style.FILL
         }
         if(session.tool=="Transform")rasterTransform.drawHandles(canvas)
+        quickShapeEdit.draw(canvas)
         canvas.restore()
         if (hover != null && session.cursor) {
             paint.style = Paint.Style.STROKE; paint.strokeWidth = dp
@@ -227,8 +237,8 @@ class PaintCanvas(context: Context, val session: DrawingSession) : View(context)
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        val hasPen=(0 until event.pointerCount).any{event.getToolType(it) in listOf(MotionEvent.TOOL_TYPE_STYLUS,MotionEvent.TOOL_TYPE_ERASER)}
-        if(session.penOnly && !hasPen && event.actionMasked!=MotionEvent.ACTION_CANCEL)return true
+        val tappedFingers=historyTap.observe(event)
+        if(quickShapeEdit.touch(event))return true
         parent.requestDisallowInterceptTouchEvent(true)
         if(session.tool=="Transform"){
             if(event.actionMasked==MotionEvent.ACTION_DOWN){requestFocus();if(onDismissPanel())return true;onInputDevice(event);if(session.info.getJSONArray("layers").getJSONObject(session.info.getInt("active")).optBoolean("locked")){onGesture("Layer is locked");return true}}
@@ -236,13 +246,13 @@ class PaintCanvas(context: Context, val session: DrawingSession) : View(context)
         }
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                removeCallbacks(shapeHold);shapePoints.clear();snapped=false;holdX=event.x;holdY=event.y
+                removeCallbacks(shapeHold);shapePoints.clear();snapped=false;shapeEligible=event.getToolType(0)!=MotionEvent.TOOL_TYPE_ERASER && !(session.penButtonErase && event.isButtonPressed(MotionEvent.BUTTON_STYLUS_PRIMARY));holdX=event.x;holdY=event.y
                 requestFocus()
                 if (onDismissPanel()) return true
                 downTime = SystemClock.uptimeMillis(); downX = event.x; downY = event.y; moved = false; multi = false; maxPointers = 1
                 activePointer = event.getPointerId(0); pen = event.getToolType(0) in listOf(MotionEvent.TOOL_TYPE_STYLUS, MotionEvent.TOOL_TYPE_ERASER)
                 onInputDevice(event)
-                if (!pen && !session.fingerDrawing && session.tool in listOf("Paint", "Erase", "Smudge")) return true
+                if (!pen && (session.penOnly || !session.fingerDrawing) && session.tool in listOf("Paint", "Erase", "Smudge")) return true
                 if(session.info.getJSONArray("layers").getJSONObject(session.info.getInt("active")).optBoolean("locked") && session.tool in listOf("Paint","Smudge","Erase","Fill","Transform")){onGesture("Layer is locked");return true}
                 when (session.tool) {
                     "Select" -> { selectionPoints.clear(); selectionPoints.add(documentPoint(event.x, event.y)); updateSelectionPath() }
@@ -278,7 +288,7 @@ class PaintCanvas(context: Context, val session: DrawingSession) : View(context)
             MotionEvent.ACTION_POINTER_UP -> {
                 removeCallbacks(shapeHold)
                 if (pen && drawing && event.getPointerId(event.actionIndex) == activePointer) {
-                    session.stroke(2, if(snapped)floatArrayOf() else strokeSamples(event, event.actionIndex, false), event.getToolType(event.actionIndex) == MotionEvent.TOOL_TYPE_ERASER)
+                    if(snapped)quickShapeEdit.release()else session.stroke(2,strokeSamples(event,event.actionIndex,false),event.getToolType(event.actionIndex)==MotionEvent.TOOL_TYPE_ERASER)
                     drawing = false; onChanged()
                 } else if (multi) startGesture(event, event.actionIndex)
             }
@@ -286,8 +296,8 @@ class PaintCanvas(context: Context, val session: DrawingSession) : View(context)
                 removeCallbacks(shapeHold)
                 removeCallbacks(longPress)
                 if (multi) {
-                    if (!moved && SystemClock.uptimeMillis() - downTime < 330) {
-                        when (maxPointers) { 2 -> { if(session.twoFingerUndo){session.command("undo"); onGesture("Undo")} }; 3 -> { if(session.threeFingerRedo){session.command("redo"); onGesture("Redo")} }; 4 -> if(session.fourFingerFullScreen)onToggleInterface() }
+                    if (tappedFingers!=0) {
+                        when (tappedFingers) { 2 -> { if(session.twoFingerUndo){session.command("undo"); onGesture("Undo")} }; 3 -> { if(session.threeFingerRedo){session.command("redo"); onGesture("Redo")} }; 4 -> if(session.fourFingerFullScreen)onToggleInterface() }
                         onChanged()
                     }
                 } else if (event.flags and MotionEvent.FLAG_CANCELED != 0) {
@@ -298,11 +308,12 @@ class PaintCanvas(context: Context, val session: DrawingSession) : View(context)
                         val points = JSONArray(); selectionPoints.forEach { points.put(JSONArray().put(it.x).put(it.y)) }
                         session.command("select", JSONObject().put("shape", selectionShape).put("points", points)); onChanged()
                     }
-                    drawing -> { session.stroke(2, if(snapped)floatArrayOf() else strokeSamples(event, 0, false), event.getToolType(0) == MotionEvent.TOOL_TYPE_ERASER || (session.penButtonErase && event.isButtonPressed(MotionEvent.BUTTON_STYLUS_PRIMARY))); onChanged() }
+                    drawing -> {if(snapped)quickShapeEdit.release()else session.stroke(2,strokeSamples(event,0,false),event.getToolType(0)==MotionEvent.TOOL_TYPE_ERASER || (session.penButtonErase && event.isButtonPressed(MotionEvent.BUTTON_STYLUS_PRIMARY)));onChanged()}
                 }
                 drawing = false; activePointer = -1; multi = false; pickPoint = null; invalidate(); performClick()
             }
             MotionEvent.ACTION_CANCEL -> {
+                finishQuickShape(cancel=true)
                 removeCallbacks(shapeHold)
                 removeCallbacks(longPress); if (drawing) { session.stroke(3, floatArrayOf()); onChanged() }
                 drawing = false; activePointer = -1; multi = false; picking = false; pickPoint = null; invalidate()

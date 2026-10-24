@@ -11,6 +11,7 @@ internal class VectorEditorView(val activity:MainActivity,val document:VectorDoc
     val canvas=VectorCanvas(activity,document)
     private val density=resources.displayMetrics.density
     private fun dp(v:Int)=(v*density).roundToInt()
+    private val colorDrop by lazy{VectorColorDropController(this,canvas)}
     private val toolbar=FrameLayout(activity).apply{setBackgroundColor(StudioColors.toolbar)}
     private val rail=LinearLayout(activity).apply{orientation=LinearLayout.VERTICAL;gravity=Gravity.CENTER;setPadding(0,dp(10),0,dp(10));setBackgroundColor(StudioColors.rail);contentDescription="Vector side controls"}
     private lateinit var widthSlider:VerticalSlider
@@ -29,10 +30,11 @@ internal class VectorEditorView(val activity:MainActivity,val document:VectorDoc
     private val hud=BrushHud(activity)
     private val hideHud=Runnable{StudioMotion.chrome(hud,false)}
     private var styleBefore:ByteArray?=null
-    private var penTime=Long.MIN_VALUE;private var blocked=false
+    private var penTouchActive=false;private var blocked=false
     val busy get()=canvas.busy || styleBefore!=null
     fun snapshotBytes()=styleBefore?.clone()?:canvas.snapshot()
     init {
+        post{if(ReferencePanel.wasOpen(activity))showReference()}
         addView(canvas,LayoutParams(-1,-1).apply{topMargin=dp(barHeight);leftMargin=dp(44)})
         addView(toolbar,LayoutParams(-1,dp(barHeight),Gravity.TOP))
         widthSlider=VerticalSlider(activity,"Vector stroke width",sqrt(canvas.strokeWidth/160f)){value->
@@ -77,6 +79,7 @@ internal class VectorEditorView(val activity:MainActivity,val document:VectorDoc
         val right=LinearLayout(activity).apply{gravity=Gravity.RIGHT or Gravity.CENTER_VERTICAL}
         right.addView(tool("Layers"){layers()},LinearLayout.LayoutParams(dp(48),dp(44)))
         right.addView(tool("Colors","Color"){colors()},LinearLayout.LayoutParams(dp(48),dp(44)))
+        icons["Colors"]?.let{colorDrop.bind(it){colors()}}
         val undoRedo=LinearLayout(activity)
         undoRedo.addView(tool("Undo"){canvas.undo()},LinearLayout.LayoutParams(dp(44),dp(44)))
         undoRedo.addView(tool("Redo"){canvas.redo()},LinearLayout.LayoutParams(dp(44),dp(44)))
@@ -125,6 +128,10 @@ internal class VectorEditorView(val activity:MainActivity,val document:VectorDoc
         nodeControls.removeAllViews();nodeScroll.visibility=if(canvas.tool=="Nodes" && canvas.selected!=null)VISIBLE else GONE
         val obj=canvas.selected?:return;val anchors=VectorGeometry.anchors(obj);val index=anchors.indexOfFirst{it.first==canvas.selectedNode}
         if(obj.kind in listOf("Line","Pen","Bezier"))nodeControls.addView(button(if(canvas.addingAnchor)"Tap path · Cancel" else "+ Anchor"){canvas.addAnchorMode()}.apply{contentDescription="Add anchor";tooltipText="Tap the selected path to add an anchor point"},LinearLayout.LayoutParams(dp(if(canvas.addingAnchor)150 else 106),dp(44)))
+        if(obj.kind in listOf("Line","Pen","Bezier")){
+            nodeControls.addView(button(if(obj.closed)"Open path"else"Close path"){canvas.closePath()},LinearLayout.LayoutParams(dp(108),dp(44)))
+            if(!obj.closed)nodeControls.addView(button(if(canvas.joiningPaths)"Cancel join"else"Join ends"){canvas.joinPathMode()},LinearLayout.LayoutParams(dp(108),dp(44)))
+        }
         nodeControls.addView(button("‹"){canvas.cycleNode(-1)}.apply{contentDescription="Previous point"},LinearLayout.LayoutParams(dp(44),dp(44)))
         nodeControls.addView(button(if(index<0)"Tap a point"else"Point ${index+1}/${anchors.size}"){nodeCoordinates()}.apply{contentDescription="Point coordinates"},LinearLayout.LayoutParams(dp(134),dp(44)))
         nodeControls.addView(button("›"){canvas.cycleNode(1)}.apply{contentDescription="Next point"},LinearLayout.LayoutParams(dp(44),dp(44)))
@@ -142,8 +149,10 @@ internal class VectorEditorView(val activity:MainActivity,val document:VectorDoc
             body.addView(TextView(activity).apply{text="0% follows input directly. Higher values reduce small shakes and add trailing behind the pen. The setting is saved for Vector canvases.";setTextColor(0xffb9c2ca.toInt())})
         }
     }
+    private var reference:ReferencePanel?=null
+    internal fun showReference(){reference?.let{it.bringToFront();return};reference=ReferencePanel(activity,{color->canvas.ink=color;canvas.edit{editableSelection()?.stroke=color};refresh()},{reference=null}).also{it.attach(this)}}
     private fun actions(){panel("Actions",true){body->
-        for((label,action) in listOf<Pair<String,()->Unit>>("Stroke settings" to {strokeSettings()},"Object" to {objectActions()},"Fill" to {canvas.fillColor=if(canvas.fillColor==null)canvas.ink else null;canvas.edit{editableSelection()?.takeIf{it.kind in listOf("Rectangle","Ellipse")}?.fill=canvas.fillColor}},"Fit" to {canvas.fit()},"Prefs" to {preferences()},"Save artwork" to {save()}))body.addView(button(label){action()},LinearLayout.LayoutParams(-1,dp(48)))
+        for((label,action) in listOf<Pair<String,()->Unit>>("Reference image" to {dismissPanel();showReference()},"Import Inkstone / PSD" to {activity.importDocument()},"Stroke settings" to {strokeSettings()},"Object" to {objectActions()},"Fill" to {canvas.fillColor=if(canvas.fillColor==null)canvas.ink else null;canvas.edit{editableSelection()?.takeIf{it.isClosed}?.fill=canvas.fillColor}},"Fit" to {canvas.fit()},"Prefs" to {preferences()},"Save artwork" to {save()}))body.addView(button(label){action()},LinearLayout.LayoutParams(-1,dp(48)))
         body.addView(TextView(activity).apply{text="Select an object to move it. Drag a corner to resize, the upper handle to rotate. Nodes selects anchors on the curve. Drag a selected anchor or its white handles; use Previous/Next and Point coordinates for precise edits.";setTextColor(0xffb9c2ca.toInt());setPadding(dp(8),dp(12),dp(8),dp(12))})
     }}
     private fun save(){
@@ -162,7 +171,7 @@ internal class VectorEditorView(val activity:MainActivity,val document:VectorDoc
             for(label in listOf("Stroke","Fill","No fill"))choices.addView(button(label){
                 if(canvas.selected!=null && editableSelection()==null){activity.message("This layer is locked");return@button}
                 val color=runCatching{Color.parseColor(hex.text.toString().trim())}.getOrElse{activity.message("Invalid hex color");return@button}
-                canvas.edit{when(label){"Stroke"->{canvas.ink=color;editableSelection()?.stroke=color};"Fill"->{canvas.fillColor=color;editableSelection()?.takeIf{it.kind in listOf("Rectangle","Ellipse")}?.fill=color};else->{canvas.fillColor=null;editableSelection()?.fill=null}}}
+                canvas.edit{when(label){"Stroke"->{canvas.ink=color;editableSelection()?.stroke=color};"Fill"->{canvas.fillColor=color;editableSelection()?.takeIf{it.isClosed}?.fill=color};else->{canvas.fillColor=null;editableSelection()?.fill=null}}}
             },LinearLayout.LayoutParams(0,dp(48),1f));body.addView(choices)
         }
     }
@@ -184,7 +193,7 @@ internal class VectorEditorView(val activity:MainActivity,val document:VectorDoc
     }
     private fun layers(){
         canvas.cancelGesture();panel("Layers"){body->
-            body.addView(button("Add layer"){if(document.layers.size>=32)activity.message("Vector layer limit reached")else{canvas.edit{val id=document.nextId();document.layers.add(document.active+1,VectorLayer(id,"Layer $id"));document.active++;canvas.selectedId=null};dismissPanel();layers()}},LinearLayout.LayoutParams(-1,dp(44)))
+            body.addView(button("Add layer"){run{canvas.edit{val id=document.nextId();document.layers.add(document.active+1,VectorLayer(id,"Layer $id"));document.active++;canvas.selectedId=null};dismissPanel();layers()}},LinearLayout.LayoutParams(-1,dp(44)))
             for(layer in document.layers.asReversed()){
                 val row=LinearLayout(activity).apply{gravity=Gravity.CENTER_VERTICAL;setPadding(dp(8),dp(4),dp(8),dp(4));background=android.graphics.drawable.GradientDrawable().apply{setColor(if(document.layers[document.active]===layer)StudioColors.accent else 0x226e7175);cornerRadius=dp(StudioShape.CORNER_DP).toFloat()}}
                 val thumbnail=document.bitmap(72,layer)
@@ -212,19 +221,19 @@ internal class VectorEditorView(val activity:MainActivity,val document:VectorDoc
     }
     private fun preferences(){
         canvas.cancelGesture()
-        val labels=arrayOf("Pen-only input","Protect controls from palm")
-        AlertDialog.Builder(activity).setTitle("Vector preferences").setMultiChoiceItems(labels,booleanArrayOf(activity.penOnlyInput,activity.protectVectorControls)){_,index,enabled->activity.setVectorInputPreference(index,enabled)}
+        val labels=arrayOf("Pen-only input","Protect controls from palm","Two-finger tap: Undo","Three-finger tap: Redo")
+        AlertDialog.Builder(activity).setTitle("Vector preferences").setMultiChoiceItems(labels,booleanArrayOf(activity.penOnlyInput,activity.protectVectorControls,activity.twoFingerUndo,activity.threeFingerRedo)){_,index,enabled->activity.setVectorInputPreference(index,enabled)}
             .setMessage(null).setPositiveButton("Done",null).show()
     }
-    override fun dispatchHoverEvent(e:MotionEvent):Boolean{if((0 until e.pointerCount).any{e.getToolType(it)==MotionEvent.TOOL_TYPE_STYLUS})penTime=SystemClock.uptimeMillis();return super.dispatchHoverEvent(e)}
     override fun dispatchTouchEvent(e:MotionEvent):Boolean{
         val pen=(0 until e.pointerCount).any{e.getToolType(it) in listOf(MotionEvent.TOOL_TYPE_STYLUS,MotionEvent.TOOL_TYPE_ERASER)}
-        if(pen)penTime=SystemClock.uptimeMillis()
-        if(e.actionMasked==MotionEvent.ACTION_DOWN){val dock=e.x<dp(44) && e.y>=dp(barHeight);val recent=penTime!=Long.MIN_VALUE && SystemClock.uptimeMillis()-penTime<700
-            blocked=!pen && ((dock && activity.penOnlyInput) || activity.protectVectorControls && recent && (dock || e.y<dp(barHeight)))}
-        if(blocked){if(e.actionMasked in listOf(MotionEvent.ACTION_UP,MotionEvent.ACTION_CANCEL))blocked=false;return true}
+        if(e.actionMasked==MotionEvent.ACTION_CANCEL)penTouchActive=false
+        if(pen)when(e.actionMasked){MotionEvent.ACTION_DOWN->penTouchActive=true;MotionEvent.ACTION_UP,MotionEvent.ACTION_CANCEL->penTouchActive=false;MotionEvent.ACTION_POINTER_UP->if(e.getToolType(e.actionIndex) in listOf(MotionEvent.TOOL_TYPE_STYLUS,MotionEvent.TOOL_TYPE_ERASER))penTouchActive=false}
+        if(e.actionMasked==MotionEvent.ACTION_DOWN && !pen){val dock=e.x<dp(44) && e.y>=dp(barHeight);blocked=activity.protectVectorControls && penTouchActive && (dock || e.y<dp(barHeight))}
+        if(blocked && !pen){if(e.actionMasked in listOf(MotionEvent.ACTION_UP,MotionEvent.ACTION_CANCEL))blocked=false;return true}
         return super.dispatchTouchEvent(e)
     }
+    override fun onDetachedFromWindow(){colorDrop.cancel();super.onDetachedFromWindow()}
     fun key(code:Int,event:KeyEvent):Boolean {
         if(event.isCtrlPressed && code==KeyEvent.KEYCODE_Z){if(event.isShiftPressed)canvas.redo() else canvas.undo();return true}
         if(event.isCtrlPressed && code==KeyEvent.KEYCODE_S){activity.saveCurrent();return true}

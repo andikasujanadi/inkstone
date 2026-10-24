@@ -1,4 +1,4 @@
-# Saving and export — 0.1.7
+# Saving and export — 0.1.8
 
 Save now distinguishes app-private projects, Photo Gallery output, and files in a chosen folder.
 
@@ -12,7 +12,7 @@ Save now distinguishes app-private projects, Photo Gallery output, and files in 
 
 Android 10+ Gallery saves use scoped MediaStore storage and publish only after the image is written. A failed write removes the pending record. Android 8/9 request legacy storage permission only when saving to the Photo Gallery; file-picker exports remain available if permission is declined. PSD is a document and is exported to a folder, not the Photo Gallery.
 
-The PSD encoder follows the [Adobe PSD specification](https://www.adobe.com/devnet-apps/photoshop/fileformatashtml/). It writes cropped, uncompressed RGB/alpha channels and retains empty and hidden layers. The merged RGB preview uses the PSD white-matte convention; editable layer channels remain straight alpha. The embedded sRGB profile was generated with LittleCMS through Pillow ImageCms (`createProfile('sRGB')`). This is 8-bit RGB PSD, without CMYK, 16-bit channels, vector objects, smart objects, groups, adjustment layers, or PSD import. Inkstone and other editors may composite some clipping/blend cases differently. Photoshop desktop has not been tested directly.
+The PSD encoder follows the [Adobe PSD specification](https://www.adobe.com/devnet-apps/photoshop/fileformatashtml/). It writes cropped, uncompressed RGB/alpha channels and retains empty and hidden layers. The merged RGB preview uses the PSD white-matte convention; editable layer channels remain straight alpha. The embedded sRGB profile was generated with LittleCMS through Pillow ImageCms (`createProfile('sRGB')`). This is 8-bit RGB PSD, without CMYK, 16-bit channels, vector objects, smart objects, groups, adjustment layers, or the full set of PSD import features. Inkstone and other editors may composite some clipping/blend cases differently. Photoshop desktop has not been tested directly.
 
 PSD writes run on the drawing worker into an app-cache file, then copy to the selected destination on the storage executor. Pixel history is unchanged and a live stroke is not ended. The encoder streams layer data rather than constructing the entire PSD in memory; the merged image uses one canvas-sized u32 buffer (up to 64 MiB), plus small row/header buffers. Uncompressed files can be large. A canceled picker or normal completion removes the temporary PSD. PNG/JPG export no longer also serializes the whole project unnecessarily. Canceling an image picker recycles the temporary image.
 
@@ -32,6 +32,10 @@ python scripts/verify-psd.py
 
 Vector documents preserve geometry in `.inkstone` and SVG; PNG/JPG and PSD rasterize at document resolution. PSD retains separate rasterized layers. See [VECTOR_MODE.md](VECTOR_MODE.md) for tools and limitations.
 
-These exports are included in the 0.1.7 early-development preview.
+These exports are included in the 0.1.8 early-development preview.
 
 Pending Raster transforms commit before project/image/PSD snapshots; exports use the full-resolution affine result, not the bounded live preview. See [LOCAL_PREVIEW_4.md](LOCAL_PREVIEW_4.md).
+
+## Layer masks and PSD import
+
+Raster layer masks export as separate grayscale PSD user-mask channels while original RGB/alpha pixels remain editable. Layered 8-bit RGB PSD import supports RAW, RLE, ZIP and ZIP prediction. See [LOCAL_WORKFLOWS.md](LOCAL_WORKFLOWS.md) for supported metadata, rejection cases, memory limits and import warnings.

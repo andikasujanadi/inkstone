@@ -15,12 +15,13 @@ class GalleryView(private val activity: MainActivity) : LinearLayout(activity) {
     private var selecting=false
     private val selected=mutableSetOf<String>()
     private val blue=StudioColors.accent
+    private val artworkCards=mutableMapOf<String,View>()
     private fun label(text:String,size:Float=15f,color:Int=Color.WHITE)=TextView(activity).apply{
         this.text=text;textSize=size;setTextColor(color);gravity=Gravity.CENTER_VERTICAL;setPadding(dp(12),0,dp(12),0)
     }
     init {orientation=VERTICAL;setBackgroundColor(StudioColors.surface);rebuild()}
     private fun rebuild(){
-        removeAllViews()
+        removeAllViews();artworkCards.clear()
         val narrow=resources.displayMetrics.widthPixels/density<600
         val header=LinearLayout(activity).apply{gravity=Gravity.CENTER_VERTICAL;setPadding(dp(if(narrow)12 else 36),dp(6),dp(16),0)}
         header.addView(label("Inkstone",if(narrow)27f else 36f).apply{typeface=Typeface.create("sans-serif-medium",Typeface.BOLD)},LayoutParams(0,dp(80),1f))
@@ -62,6 +63,11 @@ class GalleryView(private val activity: MainActivity) : LinearLayout(activity) {
             bottom.addView(label("Delete",15f,0xffff6258.toInt()).apply{isFocusable=true;setOnClickListener{deleteSelected()}},LayoutParams(-2,dp(60)));addView(bottom)
         }
     }
+    internal fun setOpening(id:String?){
+        artworkCards.forEach{(key,card)->card.isEnabled=id==null;card.alpha=if(key==id).55f else 1f
+            if(android.os.Build.VERSION.SDK_INT>=30)card.stateDescription=if(key==id)"Opening artwork"else null
+        }
+    }
     private fun card(art:Artwork,widthDp:Int):View{
         val card=LinearLayout(activity).apply{orientation=VERTICAL;setPadding(dp(10),0,dp(10),dp(30));isClickable=true;isFocusable=true;contentDescription="${art.name}, ${art.width} by ${art.height} pixels"}
         val frame=FrameLayout(activity).apply{
@@ -74,8 +80,10 @@ class GalleryView(private val activity: MainActivity) : LinearLayout(activity) {
         card.addView(frame,LayoutParams(-1,dp((widthDp*.72f).toInt())))
         card.addView(label(art.name,14f).apply{setPadding(dp(2),0,dp(2),0);maxLines=1;ellipsize=android.text.TextUtils.TruncateAt.END},LayoutParams(-1,dp(32)))
         card.addView(label("${art.width} × ${art.height}px${if(art.mode=="vector")" · Vector" else ""}",11f,0xff999999.toInt()).apply{setPadding(dp(2),0,0,0)},LayoutParams(-1,dp(18)))
-        card.setOnClickListener{if(selecting){if(!selected.add(art.id))selected.remove(art.id);rebuild()}else activity.openArtwork(art)}
+        artworkCards[art.id]=card
+        card.setOnClickListener{if(activity.navigationBusy)return@setOnClickListener;if(selecting){if(!selected.add(art.id))selected.remove(art.id);rebuild()}else activity.openArtwork(art)}
         card.setOnLongClickListener{
+            if(activity.navigationBusy)return@setOnLongClickListener true
             AlertDialog.Builder(activity).setTitle(art.name).setItems(arrayOf("Rename","Duplicate","Delete")){_,which->
                 when(which){
                     0->activity.textDialog("Artwork name",art.name){name->activity.store.rename(art.id,name);rebuild()}

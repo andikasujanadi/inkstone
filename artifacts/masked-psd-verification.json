@@ -1,0 +1,8 @@
+{
+  "passed": true,
+  "reader": "psd-tools",
+  "original_layer_pixels_checked": 544,
+  "grayscale_mask_retained": true,
+  "composite_max_premultiplied_error": 1.027450980392146,
+  "photoshop_desktop_tested": false
+}

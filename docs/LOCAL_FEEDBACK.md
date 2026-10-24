@@ -6,7 +6,7 @@ This is an unpublished working-tree build for review. It has not been pushed, ta
 
 ## Changes
 
-- Actions → Prefs → Pen-only input: finger input cannot draw, select, transform, pick colors on the canvas, navigate the canvas, change the dock sliders, or drag ColorDrop onto artwork. Stylus and eraser tool types remain accepted. Menus remain touchable so the option can be disabled without a pen.
+- Actions → Prefs → Pen-only input: as of 0.1.8-preview2, finger input cannot paint, erase or smudge. Fingers can still navigate, select, transform, pick colors, change controls and use ColorDrop. Stylus and eraser tool types remain accepted.
 - Protect controls from palm: enabled by default. Finger gestures beginning on the dock are ignored while a stylus was touching/hovering within 700 ms; toolbar touches are also guarded during a pen stroke. This supplements Android's hardware palm rejection and can be disabled. It does not identify palms independently of device input reports.
 - Stabilization persists across panels, brush selection, new canvases, and app preferences. The 100% control correctly maps to the engine's 0.95 maximum and reopens at 100%. This fixes persistence and slider normalization; the filtering algorithm is unchanged.
 - The 44 dp side rail is solid and fills the complete editor height below the toolbar. The drawing viewport reserves its width. Right-hand mode moves both rail and reserved space; tablet and phone layouts reflow. The outer dock edge is intentionally square; slider tracks keep their rounded corners.

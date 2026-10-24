@@ -412,3 +412,140 @@ fn eraser_library_hardness_selection_and_alpha_lock() {
     assert!((e.state.layers[0].pixels[32*64+12]>>24)>200);assert!((e.state.layers[0].pixels[32*64+31]>>24)<10);
     e.state.layers[0].alpha_lock=true;let before=e.save().unwrap();e.begin(point,brush);e.end();assert_eq!(e.save().unwrap(),before);
 }
+
+#[test]
+fn layer_mask_paint_is_nondestructive_reversible_and_persistent(){
+    let mut e=Engine::new(64,64).unwrap();e.command(&json!({"op":"fill","color":0xffe05020u32})).unwrap();let pixels=e.state.layers[0].pixels.clone();
+    e.command(&json!({"op":"mask","action":"add"})).unwrap();let before=e.save().unwrap();
+    e.begin(Sample{x:32.0,y:32.0,pressure:1.0,tilt:0.0},Brush{color:0xff000000,size:24.0,pressure_size:0.0,..Brush::default()});e.end();
+    assert_eq!(e.state.layers[0].pixels,pixels);assert_eq!(e.color_at(32,32,false)>>24,0);assert_eq!(e.color_at(4,4,false),0xffe05020);
+    let masked=e.save().unwrap();assert_eq!(Engine::load(&masked).unwrap().save().unwrap(),masked);
+    assert!(e.undo());assert_eq!(e.save().unwrap(),before);assert!(e.redo());assert_eq!(e.save().unwrap(),masked);
+    e.begin(Sample{x:32.0,y:32.0,pressure:1.0,tilt:0.0},Brush{color:0xffffffff,size:10.0,pressure_size:0.0,..Brush::default()});e.cancel();assert_eq!(e.save().unwrap(),masked);
+    e.command(&json!({"op":"mask","action":"enable","enabled":false})).unwrap();assert_eq!(e.color_at(32,32,false),0xffe05020);
+    e.command(&json!({"op":"mask","action":"enable","enabled":true})).unwrap();e.command(&json!({"op":"mask","action":"apply"})).unwrap();assert!(e.state.layers[0].mask.is_none());assert_eq!(e.state.layers[0].pixels[32*64+32]>>24,0);
+    e.undo();assert!(e.state.layers[0].mask.is_some());assert_eq!(e.state.layers[0].pixels,pixels);
+}
+#[test]
+fn masks_respect_selection_lock_clipping_and_transform(){
+    let mut e=Engine::new(64,64).unwrap();dot(&mut e,20.0,20.0,16.0,0xffff0000);
+    e.command(&json!({"op":"select","shape":"Rectangle","points":[[16,10],[40,40]]})).unwrap();e.command(&json!({"op":"mask"})).unwrap();assert_eq!(e.state.layers[0].mask.as_ref().unwrap()[20*64+12],0);
+    e.command(&json!({"op":"mask","action":"pixels"})).unwrap();assert!(e.command(&json!({"op":"transformMatrix","matrix":[1,0,0,1,10,0]})).is_err());e.command(&json!({"op":"deselect"})).unwrap();let before=e.save().unwrap();
+    e.transform_affine([1.0,0.0,0.0,1.0,10.0,0.0]).unwrap();assert_eq!(e.color_at(30,20,false),0xffff0000);assert_eq!(e.color_at(22,20,false)>>24,0);e.undo();assert_eq!(e.save().unwrap(),before);
+    e.command(&json!({"op":"layer","locked":true})).unwrap();assert!(e.command(&json!({"op":"mask","action":"delete"})).is_err());
+}
+#[test]
+fn symmetry_mirrors_strokes_once_and_stays_one_undo(){
+    for (mode,points) in [("Vertical",vec![(12,18),(52,18)]),("Horizontal",vec![(12,18),(12,46)]),("Quadrant",vec![(12,18),(52,18),(12,46),(52,46)]),("Radial 4",vec![(12,18),(46,12),(52,46),(18,52)])]{
+        let mut e=Engine::new(64,64).unwrap();e.command(&json!({"op":"symmetry","mode":mode})).unwrap();dot(&mut e,12.0,18.0,6.0,0xffff0000);
+        for (x,y)in points{assert!(e.color_at(x,y,false)>>24>0,"{mode} {x},{y}");}assert_eq!(e.undo.len(),1);e.undo();assert!(e.state.layers[0].pixels.iter().all(|p|*p==0));
+    }
+}
+#[test]
+fn layered_psd_import_retains_pixels_layers_masks_and_merged_appearance(){
+    let mut e=Engine::new(48,32).unwrap();e.command(&json!({"op":"setup","visible":false,"dpi":144})).unwrap();dot(&mut e,18.0,15.0,20.0,0xff885522);
+    e.command(&json!({"op":"mask","hide":true})).unwrap();e.command(&json!({"op":"fill","color":0xff808080u32})).unwrap();e.command(&json!({"op":"mask","action":"pixels"})).unwrap();
+    e.command(&json!({"op":"add"})).unwrap();dot(&mut e,24.0,18.0,12.0,0x9044bbcc);e.command(&json!({"op":"layer","name":"Top · 顶部","opacity":0.5,"blend":"Multiply"})).unwrap();
+    let mut data=vec![];e.write_psd(&mut data).unwrap();let (copy,warnings)=Engine::read_psd(&data).unwrap();assert!(warnings.is_empty());assert_eq!(copy.dpi,144);assert_eq!(copy.state.layers.len(),2);assert_eq!(copy.state.layers[1].name,"Top · 顶部");assert_eq!(copy.state.layers[0].mask,e.state.layers[0].mask);
+    for i in 0..48*32{assert_eq!(copy.state.layers[0].pixels[i],e.state.layers[0].pixels[i]);let a=copy.color_at(i%48,i/48,false);let b=e.color_at(i%48,i/48,false);for shift in [0,8,16,24]{assert!(((a>>shift&255) as i32-(b>>shift&255) as i32).abs()<=1);}}
+    std::fs::write("../../artifacts/masked-roundtrip.psd",data).unwrap();
+    let mut source:Value=serde_json::from_slice(&e.save().unwrap()).unwrap();source["composite"]=json!((0..48*32).map(|i|e.color_at(i%48,i/48,true)).collect::<Vec<_>>());std::fs::write("../../artifacts/masked-roundtrip.json",serde_json::to_vec(&source).unwrap()).unwrap();
+}
+#[test]
+fn psd_import_rejects_truncation_and_unsupported_header(){
+    let mut e=Engine::new(16,16).unwrap();let mut data=vec![];e.write_psd(&mut data).unwrap();
+    for n in [0,4,25,40,100,data.len()/2]{assert!(Engine::read_psd(&data[..n]).is_err());}
+    data[22]=0;data[23]=16;assert!(Engine::read_psd(&data).is_err());
+}
+#[test]
+fn independent_psd_fixtures_support_raw_rle_zip_prediction_and_masks(){
+    for (data,json) in [
+        (&include_bytes!("../tests/fixtures/layered-0.psd")[..],include_str!("../tests/fixtures/layered-0.json")),
+        (&include_bytes!("../tests/fixtures/layered-1.psd")[..],include_str!("../tests/fixtures/layered-1.json")),
+        (&include_bytes!("../tests/fixtures/layered-2.psd")[..],include_str!("../tests/fixtures/layered-2.json")),
+        (&include_bytes!("../tests/fixtures/layered-3.psd")[..],include_str!("../tests/fixtures/layered-3.json")),
+    ]{
+        let (e,warnings)=Engine::read_psd(data).unwrap();assert!(warnings.is_empty(),"{warnings:?}");assert_eq!(e.state.layers.len(),2);assert_eq!(e.state.layers[0].name,"Cropped base");assert!(e.state.layers[0].mask.is_some());
+        let source:Value=serde_json::from_str(json).unwrap();
+        for (i,p) in source["pixels"].as_array().unwrap().iter().enumerate(){let expected=p.as_u64().unwrap() as u32;let actual=e.color_at(i%48,i/48,false);
+            for shift in [0,8,16,24]{let a=(actual>>shift&255) as i32;let b=(expected>>shift&255) as i32;if shift==24 || expected>>24>0{assert!((a-b).abs()<=2,"pixel {i} shift {shift}: {actual:08x} != {expected:08x}");}}
+        }
+    }
+}
+#[test]
+fn small_mask_strokes_keep_history_proportional_to_changed_area(){
+    let mut e=Engine::new(512,512).unwrap();e.command(&json!({"op":"mask"})).unwrap();
+    for x in (20..220).step_by(10){e.begin(Sample{x:x as f32,y:50.0,pressure:1.0,tilt:0.0},Brush{color:0xff000000,size:6.0,pressure_size:0.0,..Brush::default()});e.end();}
+    assert_eq!(e.undo.len(),21);let mask_bytes:usize=e.undo.iter().skip(1).map(Change::bytes).sum();assert!(mask_bytes<10_000,"Small mask strokes used {mask_bytes} history bytes");
+    for _ in 0..20{assert!(e.undo());}assert!(e.state.layers[0].mask.as_ref().unwrap().iter().all(|p|*p==255));
+}
+
+#[test]
+fn history_keeps_thirty_steps_after_spilling_and_cleans_cache() {
+    let folder=std::env::temp_dir().join(format!("ink-history-test-{}",std::process::id()));
+    std::fs::create_dir_all(&folder).unwrap();
+    let mut e=Engine::new(32,32).unwrap();e.history_directory=folder.clone();
+    let mut states=vec![e.save().unwrap()];
+    for i in 0..35 {
+        e.command(&json!({"op":"fill","color":0xff000000u32|((i+1)*0x010307)})).unwrap();
+        e.compact_history_to(256);states.push(e.save().unwrap());
+    }
+    assert_eq!(e.undo.len(),35);assert!(e.undo.iter().any(|c|matches!(c,Change::Archived(_))));
+    for index in (5..35).rev(){assert!(e.undo());assert_eq!(e.save().unwrap(),states[index]);}
+    assert_eq!(e.redo.len(),30);
+    for state in states.iter().skip(6){assert!(e.redo());assert_eq!(e.save().unwrap(),*state);}
+    e.command(&json!({"op":"mask","action":"add"})).unwrap();e.compact_history_to(0);
+    let masked=e.save().unwrap();assert!(e.undo());assert!(e.redo());assert_eq!(masked,e.save().unwrap());
+    drop(e);assert_eq!(std::fs::read_dir(&folder).unwrap().count(),0);std::fs::remove_dir(folder).unwrap();
+}
+
+#[test]
+fn missing_history_cache_does_not_pop_or_modify_artwork() {
+    let mut e=Engine::new(32,32).unwrap();dot(&mut e,8.0,8.0,4.0,0xffff0000);
+    e.compact_history_to(0);let before=e.save().unwrap();
+    if let Change::Archived(entry)=&e.undo[0]{entry.remove_for_test();}else{panic!("history not archived")}
+    assert!(!e.undo());assert_eq!(e.undo.len(),1);assert_eq!(e.redo.len(),0);assert_eq!(e.save().unwrap(),before);assert!(e.history_error.is_some());
+}
+
+#[test]
+fn large_canvas_blank_layers_share_memory_and_remain_drawable() {
+    let mut e=Engine::new(2048,1536).unwrap();
+    let started=std::time::Instant::now();
+    for _ in 0..100 {e.command(&json!({"op":"add"})).unwrap();}
+    assert_eq!(e.state.layers.len(),101);
+    assert_eq!(Engine::layer_bytes(&e.state.layers),2048*1536*4);
+    assert!(!e.undo.iter().any(|c|matches!(c,Change::Archived(_))));
+    assert!(started.elapsed().as_secs()<5,"Adding empty layers must not serialize whole canvases");
+    e.begin(Sample{x:400.,y:400.,pressure:1.,tilt:0.},Brush{color:0xffff0000,..Brush::default()});e.end();
+    assert_eq!(e.color_at(400,400,false),0xffff0000);
+    let mut loaded=Engine::load(&e.save().unwrap()).unwrap();
+    assert_eq!(loaded.state.layers.len(),101);
+    assert_eq!(loaded.color_at(400,400,false),0xffff0000);
+    loaded.command(&json!({"op":"add"})).unwrap();
+    assert!(e.undo());assert_eq!(e.color_at(400,400,false),0);assert!(e.redo());assert_eq!(e.color_at(400,400,false),0xffff0000);
+}
+
+#[test]
+fn history_structure_binary_roundtrip_preserves_shared_buffers_and_masks(){
+    let mut e=Engine::new(32,32).unwrap();
+    e.command(&json!({"op":"add"})).unwrap();
+    e.command(&json!({"op":"mask","action":"add"})).unwrap();
+    let c=e.undo.last().unwrap();
+    let entry=history::Entry::write(c,&std::env::temp_dir()).unwrap();
+    match entry.read().unwrap(){
+        Change::Structure{before,after}=>{
+            assert!(after.layers[after.active].mask.is_some());
+            assert!(Arc::ptr_eq(&before.layers[0].pixels,&after.layers[0].pixels));
+            assert!(Arc::ptr_eq(&after.layers[0].pixels,&after.layers[1].pixels));
+        },_=>panic!("Expected layer metadata change")
+    }
+}
+
+#[test]
+fn many_duplicated_layers_reload_without_copying_every_bitmap(){
+    let mut e=Engine::new(128,128).unwrap();e.command(&json!({"op":"fill","color":0xff123456u32})).unwrap();
+    for _ in 0..80{e.command(&json!({"op":"duplicate"})).unwrap();}
+    let loaded=Engine::load(&e.save().unwrap()).unwrap();assert_eq!(loaded.state.layers.len(),81);
+    assert_eq!(Engine::layer_bytes(&loaded.state.layers),128*128*4);
+    assert_eq!(loaded.color_at(20,20,false),0xff123456);
+}

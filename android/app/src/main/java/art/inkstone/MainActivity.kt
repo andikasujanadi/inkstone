@@ -26,9 +26,11 @@ class MainActivity : Activity() {
     internal var vectorStabilization:Float
         get()=prefs.getFloat("vectorStabilization",.25f).coerceIn(0f,1f)
         set(value){prefs.edit().putFloat("vectorStabilization",value.coerceIn(0f,1f)).apply()}
+    internal val twoFingerUndo get()=prefs.getBoolean("twoFingerUndo",true)
+    internal val threeFingerRedo get()=prefs.getBoolean("threeFingerRedo",true)
     internal val penOnlyInput get()=prefs.getBoolean("penOnly",false)
     internal val protectVectorControls get()=prefs.getBoolean("protectControls",true)
-    internal fun setVectorInputPreference(index:Int,enabled:Boolean){prefs.edit().putBoolean(if(index==0)"penOnly" else "protectControls",enabled).apply()}
+    internal fun setVectorInputPreference(index:Int,enabled:Boolean){prefs.edit().putBoolean(arrayOf("penOnly","protectControls","twoFingerUndo","threeFingerRedo")[index],enabled).apply()}
     var documentId = ""; private set
     var documentName = "Untitled Artwork"
     val io = Executors.newSingleThreadExecutor()
@@ -41,6 +43,30 @@ class MainActivity : Activity() {
     var lastInputDescription = "Draw with your pen to inspect its input capabilities."
     private val prefs by lazy { getSharedPreferences("studio", MODE_PRIVATE) }
 
+    private var navigationGeneration=0L
+    internal var navigationBusy=false;private set
+    private var navigationOverlay:NavigationOverlay?=null
+    private var navigationSession:DrawingSession?=null
+    private var navigationExitView:View?=null
+    private fun currentNavigation(ticket:Long)=navigationBusy && navigationGeneration==ticket && !isDestroyed
+    private fun beginNavigation(message:String,artworkId:String?=null):Long?{
+        if(navigationBusy || isDestroyed)return null
+        navigationBusy=true;val ticket=++navigationGeneration;deferAutosave()
+        val root=findViewById<ViewGroup>(android.R.id.content)
+        (root.getChildAt(0) as? GalleryView)?.setOpening(artworkId)
+        navigationOverlay=NavigationOverlay(this,message).also{root.addView(it,ViewGroup.LayoutParams(-1,-1));it.bringToFront();it.requestFocus()}
+        return ticket
+    }
+    private fun finishNavigation(ticket:Long){if(!currentNavigation(ticket))return;navigationSession=null;clearNavigation()}
+    private fun clearNavigation(){
+        navigationBusy=false
+        navigationExitView?.let{it.animate().cancel();it.alpha=1f;it.scaleX=1f;it.scaleY=1f};navigationExitView=null
+        navigationOverlay?.let{(it.parent as? ViewGroup)?.removeView(it)};navigationOverlay=null
+        (findViewById<ViewGroup>(android.R.id.content).getChildAt(0) as? GalleryView)?.setOpening(null)
+    }
+    private fun cancelNavigation(){navigationGeneration++;navigationSession?.close();navigationSession=null;clearNavigation()}
+    private fun navigationFailed(ticket:Long,error:String){if(!currentNavigation(ticket))return;navigationSession?.close();navigationSession=null;finishNavigation(ticket);message(error)}
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         @Suppress("DEPRECATION")
@@ -51,6 +77,7 @@ class MainActivity : Activity() {
     }
 
     fun newCanvas(width: Int, height: Int, dpi:Int=300, name:String="Untitled Artwork", background:Int=Color.WHITE, visible:Boolean=true, mode:String="raster") {
+        cancelNavigation()
         if(mode=="vector"){
             runCatching{require(width in 16..8192 && height in 16..8192 && width.toLong()*height<=16_777_216);val doc=VectorDocument(width,height,dpi,background,visible);openVector(doc,store.newId(),name);scheduleSave()}.onFailure{message(it.message?:"Cannot create Vector canvas")};return
         }
@@ -67,21 +94,44 @@ class MainActivity : Activity() {
         vectorDocument=doc;documentId=id;documentName=name
         vectorEditor=VectorEditorView(this,doc);setContentView(vectorEditor);vectorEditor?.let{StudioMotion.canvasEnter(it)}
     }
-    private fun loadedDocument(bytes:ByteArray,id:String,name:String){
+    private fun loadedDocument(bytes:ByteArray,id:String,name:String,existingTicket:Long?=null){
+        val ticket=existingTicket?:beginNavigation("Opening $name…")?:return
+        if(!currentNavigation(ticket))return
         io.execute{
             val parsed=runCatching{if(VectorDocument.isVector(bytes))VectorDocument.decode(bytes)else null}
             runOnUiThread{
-                if(isDestroyed)return@runOnUiThread
+                if(!currentNavigation(ticket))return@runOnUiThread
                 parsed.onSuccess{vector->
-                    if(vector!=null)openVector(vector,id,name)
-                    else{val s=DrawingSession(32,32);s.onError=::message
-                        s.load(bytes){ok->if(ok){session?.close();session=s;vectorDocument=null;vectorEditor=null;documentId=id;documentName=name;configure(s);openEditor()}else s.close()}}
-                }.onFailure{message("Could not open project: ${it.message}")}
+                    if(vector!=null){
+                        openVector(vector,id,name)
+                        vectorEditor?.post{finishNavigation(ticket)}
+                    }else{
+                        val next=runCatching{DrawingSession(32,32)}.getOrElse{navigationFailed(ticket,"Could not open project: ${it.message}");return@onSuccess}
+                        navigationSession=next
+                        var backendReady=false
+                        fun present(){
+                            if(!currentNavigation(ticket) || !backendReady || next.frameSerial==0L)return
+                            navigationSession=null
+                            session?.close();session=next;vectorDocument=null;vectorEditor=null;documentId=id;documentName=name
+                            openEditor();finishNavigation(ticket)
+                        }
+                        next.onFrame={present()}
+                        next.onError={navigationFailed(ticket,"Could not open project: $it")}
+                        next.load(bytes){ok->
+                            if(!currentNavigation(ticket)){next.close();return@load}
+                            if(!ok){navigationFailed(ticket,"Could not open project");return@load}
+                            configure(next)
+                            next.command("info"){backendReady=true;present()}
+                        }
+                    }
+                }.onFailure{navigationFailed(ticket,"Could not open project: ${it.message}")}
             }
         }
     }
     private fun configure(s: DrawingSession) {
+        s.command("historyDirectory",JSONObject().put("path",java.io.File(cacheDir,"undo-history").absolutePath))
         s.setRenderer(prefs.getString("rendererMode","auto")?:"auto")
+        s.setSymmetry(prefs.getString("symmetryMode","Off")?:"Off")
         s.eraserHardness=prefs.getFloat("eraserHardness",1f)
         s.pressureEnabled=prefs.getBoolean("pressureEnabled",true);s.canvasLocked=prefs.getBoolean("canvasLocked",false);s.quickShape=prefs.getBoolean("quickShape",true)
         s.penOnly=prefs.getBoolean("penOnly",false)
@@ -102,12 +152,12 @@ class MainActivity : Activity() {
     }
     fun savePreferences() {
         val s = session ?: return
-        prefs.edit().putFloat("eraserHardness",s.eraserHardness).putBoolean("penOnly",s.penOnly).putBoolean("protectControls",s.protectControls).putFloat("stabilization",s.stabilization).putString("rendererMode",s.rendererMode).putBoolean("pressureEnabled",s.pressureEnabled).putBoolean("canvasLocked",s.canvasLocked).putBoolean("quickShape",s.quickShape).putString("cursorStyle",s.cursorStyle).putFloat("cursorOpacity",s.cursorOpacity)
+        prefs.edit().putString("symmetryMode",s.symmetryMode).putFloat("eraserHardness",s.eraserHardness).putBoolean("penOnly",s.penOnly).putBoolean("protectControls",s.protectControls).putFloat("stabilization",s.stabilization).putString("rendererMode",s.rendererMode).putBoolean("pressureEnabled",s.pressureEnabled).putBoolean("canvasLocked",s.canvasLocked).putBoolean("quickShape",s.quickShape).putString("cursorStyle",s.cursorStyle).putFloat("cursorOpacity",s.cursorOpacity)
             .putBoolean("twoFingerUndo",s.twoFingerUndo).putBoolean("threeFingerRedo",s.threeFingerRedo)
             .putBoolean("fourFingerFullScreen",s.fourFingerFullScreen).putBoolean("holdEyedropper",s.holdEyedropper).putBoolean("penButtonErase",s.penButtonErase)
             .putBoolean("finger", s.fingerDrawing).putBoolean("right", s.rightSidebar)
             .putBoolean("dynamicBrushScaling",s.dynamicBrushScaling).putFloat("rapidUndoDelay",s.rapidUndoDelay).putFloat("selectionVisibility",s.selectionVisibility)
-            .putBoolean("light", s.lightInterface).putBoolean("cursor", s.cursor).putInt("color", s.color).apply()
+            .putBoolean("light", s.lightInterface).putBoolean("cursor", s.cursor).putInt("color", editor?.colorBeforeMask?:s.color).apply()
     }
     private fun openEditor() {
         val s = session ?: return
@@ -131,21 +181,29 @@ class MainActivity : Activity() {
         savePreferences()
     }
     fun gallery() {
-        editor?.showNotice("Saving artwork…")
-        saveCurrent { saved -> if (saved && !isDestroyed){val view=editor?:vectorEditor;if(view!=null)StudioMotion.canvasExit(view){if(!isDestroyed)showGallery()} else showGallery()} }
+        if(editor==null && vectorEditor==null)return
+        val ticket=beginNavigation("Saving artwork…")?:return
+        saveCurrent{saved->
+            if(!currentNavigation(ticket))return@saveCurrent
+            if(!saved){finishNavigation(ticket);return@saveCurrent}
+            val view=editor?:vectorEditor
+            if(view!=null){navigationExitView=view;StudioMotion.canvasExit(view){if(currentNavigation(ticket))showGallery()}}else showGallery()
+        }
     }
     fun showGallery() {
+        cancelNavigation()
         canvasSetup=null;canvasPopup?.dismiss();canvasPopup=null
         session?.close(); session = null
         editor = null;vectorDocument=null;vectorEditor=null
         setContentView(GalleryView(this).also{StudioMotion.canvasEnter(it)})
     }
     fun openArtwork(art: Artwork) {
+        val ticket=beginNavigation("Opening ${art.name}…",art.id)?:return
         io.execute {
-            val data = runCatching { store.read(art.id) }
-            runOnUiThread {
-                data.onSuccess { bytes -> loadedDocument(bytes,art.id,art.name)
-                }.onFailure { message("Could not open artwork: ${it.message}") }
+            val data=runCatching{store.read(art.id)}
+            runOnUiThread{
+                if(!currentNavigation(ticket))return@runOnUiThread
+                data.onSuccess{loadedDocument(it,art.id,art.name,ticket)}.onFailure{navigationFailed(ticket,"Could not open artwork: ${it.message}")}
             }
         }
     }
@@ -279,19 +337,42 @@ class MainActivity : Activity() {
         @Suppress("DEPRECATION")
         startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("image/*"), 101)
     }
-    fun importDocument() {
-        onImported = { uri ->
-            io.execute {
-                val result = runCatching { contentResolver.openInputStream(uri).use { DocumentStore.decode(checkNotNull(it)) } }
-                runOnUiThread {
-                    result.onSuccess { bytes ->
-                        loadedDocument(bytes,store.newId(),"Imported Artwork")
-                    }.onFailure { message("Import failed: ${it.message}") }
-                }
-            }
+    private fun openPsd(file:java.io.File){
+        val next=DrawingSession(32,32);message("Opening layered PSD…")
+        next.importPsd(file){error,warnings->
+            if(isDestroyed){next.close();return@importPsd}
+            if(error!=null){next.close();message("PSD import failed: $error")}
+            else{session?.close();session=next;vectorDocument=null;vectorEditor=null;documentId=store.newId();documentName="Imported PSD";configure(next);openEditor();scheduleSave()
+                if(warnings.isNotEmpty())AlertDialog.Builder(this).setTitle("PSD import notes").setMessage(warnings.joinToString("\n\n")).setPositiveButton("OK",null).show()}
         }
+    }
+    fun importDocument() {
+        saveCurrent{saved->if(saved){
+            onImported={uri->io.execute{
+                val result=runCatching{
+                    contentResolver.openInputStream(uri).use{stream->
+                        val input=java.io.BufferedInputStream(checkNotNull(stream));input.mark(4);val signature=ByteArray(4);val count=input.read(signature);input.reset()
+                        if(count==4 && String(signature,Charsets.US_ASCII)=="8BPS"){
+                            val file=java.io.File.createTempFile("inkstone-import-",".psd",cacheDir)
+                            try{file.outputStream().use{output->val buffer=ByteArray(65536);var total=0L;while(true){val n=input.read(buffer);if(n<0)break;total+=n;require(total<=128L*1024*1024){"PSD files must be smaller than 128 MiB"};output.write(buffer,0,n)}};null to file}catch(e:Exception){file.delete();throw e}
+                        }else DocumentStore.decode(input) to null
+                    }
+                }
+                runOnUiThread{result.onSuccess{(bytes,file)->if(isDestroyed){file?.delete()}else if(file!=null)openPsd(file)else loadedDocument(checkNotNull(bytes),store.newId(),"Imported Artwork")}.onFailure{message("Import failed: ${it.message}")}}
+            }}
+            @Suppress("DEPRECATION")
+            startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*"),101)
+        }}
+    }
+    internal fun chooseReference(then:(Bitmap)->Unit){
+        onImported={uri->io.execute{val result=runCatching{
+            val bounds=BitmapFactory.Options().apply{inJustDecodeBounds=true};contentResolver.openInputStream(uri).use{BitmapFactory.decodeStream(it,null,bounds)}
+            require(bounds.outWidth>0 && bounds.outHeight>0){"Unsupported reference image"};var sample=1
+            while(bounds.outWidth.toLong()/sample*(bounds.outHeight/sample)>2_097_152 || bounds.outWidth/sample>4096 || bounds.outHeight/sample>4096)sample*=2
+            contentResolver.openInputStream(uri).use{checkNotNull(BitmapFactory.decodeStream(it,null,BitmapFactory.Options().apply{inSampleSize=sample;inPreferredConfig=Bitmap.Config.ARGB_8888}))}
+        };runOnUiThread{result.onSuccess{if(isDestroyed)it.recycle()else then(it)}.onFailure{message("Reference import failed: ${it.message}")}}}}
         @Suppress("DEPRECATION")
-        startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*"), 101)
+        startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("image/*"),101)
     }
     @Deprecated("Activity result bridge")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
@@ -304,9 +385,9 @@ class MainActivity : Activity() {
     }
     fun message(text: String) { if (!isDestroyed) Toast.makeText(this, text, Toast.LENGTH_LONG).show() }
     override fun onPause() { super.onPause(); saveCurrent() }
-    override fun onDestroy() { pendingExportCleanup?.invoke();pendingExportCleanup=null;pendingExport=null;handler.removeCallbacks(autosave); session?.close(); io.shutdown(); super.onDestroy() }
+    override fun onDestroy() { cancelNavigation();pendingExportCleanup?.invoke();pendingExportCleanup=null;pendingExport=null;handler.removeCallbacks(autosave); session?.close(); io.shutdown(); super.onDestroy() }
     @Deprecated("Native back handling")
-    override fun onBackPressed() { if(canvasSetup!=null){showGallery();return};if(canvasPopup?.isShowing==true){canvasPopup?.dismiss();return}; if(vectorEditor!=null){if(vectorEditor?.dismissPanel()!=true)gallery();return};if (editor != null) { if (!editor!!.dismissPanel()) gallery() } else super.onBackPressed() }
+    override fun onBackPressed() { if(navigationBusy){cancelNavigation();return};if(canvasSetup!=null){showGallery();return};if(canvasPopup?.isShowing==true){canvasPopup?.dismiss();return}; if(vectorEditor!=null){if(vectorEditor?.dismissPanel()!=true)gallery();return};if (editor != null) { if (!editor!!.dismissPanel()) gallery() } else super.onBackPressed() }
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
         if(vectorEditor?.key(keyCode,event)==true)return true
         val s = session

@@ -13,6 +13,8 @@ struct ExportLayer<'a> {
     locked: bool,
     blend: &'a str,
     id: u32,
+    mask:Option<&'a [u8]>,
+    mask_enabled:bool,
 }
 fn u16be(out: &mut impl Write, n: u16) -> io::Result<()> {
     out.write_all(&n.to_be_bytes())
@@ -65,7 +67,7 @@ impl Engine {
             alpha_lock: false,
             locked: false,
             blend: "Normal",
-            id: u32::MAX,
+            id: u32::MAX,mask:None,mask_enabled:true,
         });
         for (index, layer) in self.state.layers.iter().enumerate() {
             let pixels = if let Some((active, before)) = &self.flood_preview {
@@ -102,7 +104,7 @@ impl Engine {
                 alpha_lock: layer.alpha_lock,
                 locked: layer.locked,
                 blend: &layer.blend,
-                id: layer.id,
+                id: layer.id,mask:layer.mask.as_deref().map(|m|m.as_slice()),mask_enabled:layer.mask_enabled,
             });
         }
         let mut records = Vec::new();
@@ -114,11 +116,12 @@ impl Engine {
             for n in [y, x, y1, x1] {
                 u32be(&mut records, n as u32)?;
             }
-            u16be(&mut records, 4)?;
+            u16be(&mut records, if layer.mask.is_some(){5}else{4})?;
             for id in [-1i16, 0, 1, 2] {
                 u16be(&mut records, id as u16)?;
                 u32be(&mut records, (count + 2) as u32)?;
             }
+            if layer.mask.is_some(){u16be(&mut records,(-2i16) as u16)?;u32be(&mut records,(self.width*self.height+2) as u32)?;channel_bytes+=self.width*self.height+2;}
             records.write_all(b"8BIM")?;
             records.write_all(blend(layer.blend))?;
             records.write_all(&[
@@ -128,7 +131,7 @@ impl Engine {
                 0,
             ])?;
             let mut extra = Vec::new();
-            u32be(&mut extra, 0)?;
+            if layer.mask.is_some(){u32be(&mut extra,20)?;for n in [0,0,self.height,self.width]{u32be(&mut extra,n as u32)?;}extra.extend([255,if layer.mask_enabled{0}else{2},0,0]);}else{u32be(&mut extra,0)?;}
             u32be(&mut extra, 0)?;
             let name: Vec<u8> = layer
                 .name
@@ -213,6 +216,7 @@ impl Engine {
                     out.write_all(&row[..x1 - x])?;
                 }
             }
+            if let Some(mask)=layer.mask{u16be(out,0)?;out.write_all(mask)?;}
         }
         if info_length % 2 != 0 {
             out.write_all(&[0])?;
@@ -232,7 +236,7 @@ impl Engine {
                 let pixel = layer.pixels.unwrap()[idx];
                 if !layer.clipping {
                     base_alpha = if layer.visible {
-                        channel(pixel, 24)
+                        channel(pixel, 24)*if layer.mask_enabled{layer.mask.map_or(1.0,|m|m[idx] as f32/255.0)}else{1.0}
                     } else {
                         0.0
                     };
@@ -241,7 +245,7 @@ impl Engine {
                     color = composite(
                         color,
                         pixel,
-                        layer.opacity * if layer.clipping { base_alpha } else { 1.0 },
+                        layer.opacity * if layer.mask_enabled{layer.mask.map_or(1.0,|m|m[idx] as f32/255.0)}else{1.0} * if layer.clipping { base_alpha } else { 1.0 },
                         layer.blend,
                     );
                 }

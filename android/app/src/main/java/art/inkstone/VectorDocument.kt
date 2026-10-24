@@ -8,8 +8,9 @@ import kotlin.math.*
 
 internal class VectorObject(
     val id:Long,var kind:String,val points:MutableList<PointF>,var stroke:Int,var fill:Int?,var width:Float,
-    var matrix:Matrix=Matrix()
+    var matrix:Matrix=Matrix(),var closed:Boolean=false
 ){
+    val isClosed get()=closed || kind in listOf("Rectangle","Ellipse")
     private var cachedPath:Path?=null
     fun toBezier(){
         if(kind=="Line"){
@@ -41,6 +42,7 @@ internal class VectorObject(
                 else {for(i in 1 until points.size){val prev=points[i-1];val q=points[i];p.quadTo(prev.x,prev.y,(prev.x+q.x)/2,(prev.y+q.y)/2)};p.lineTo(b.x,b.y)}
             }
         }
+        if(closed)p.close()
         cachedPath=p;return p
     }
     fun bounds():RectF=RectF().also{path().computeBounds(it,true);it.inset(-width/2,-width/2);matrix.mapRect(it)}
@@ -51,10 +53,18 @@ internal class VectorObject(
         val area=Path();paint.getFillPath(path(),area);val r=RectF();area.computeBounds(r,true)
         return Region().apply{setPath(area,Region(floor(r.left).toInt()-1,floor(r.top).toInt()-1,ceil(r.right).toInt()+1,ceil(r.bottom).toInt()+1))}.contains(xy[0].roundToInt(),xy[1].roundToInt())
     }
+    fun containsInterior(point:PointF):Boolean{
+        if(!isClosed)return false
+        val inverse=Matrix();if(!matrix.invert(inverse))return false
+        val xy=floatArrayOf(point.x,point.y);inverse.mapPoints(xy)
+        val area=Path(path());area.transform(Matrix().apply{setScale(8f,8f)})
+        val r=RectF();area.computeBounds(r,true)
+        return Region().apply{setPath(area,Region(floor(r.left).toInt()-1,floor(r.top).toInt()-1,ceil(r.right).toInt()+1,ceil(r.bottom).toInt()+1))}.contains((xy[0]*8).roundToInt(),(xy[1]*8).roundToInt())
+    }
     fun json():JSONObject {
         val xy=JSONArray();points.forEach{xy.put(JSONArray().put(it.x.toDouble()).put(it.y.toDouble()))}
         val values=FloatArray(9);matrix.getValues(values)
-        return JSONObject().put("id",id).put("kind",kind).put("points",xy).put("stroke",stroke.toLong() and 0xffffffffL)
+        return JSONObject().put("id",id).put("closed",closed).put("kind",kind).put("points",xy).put("stroke",stroke.toLong() and 0xffffffffL)
             .put("fill",fill?.let{it.toLong() and 0xffffffffL}?:JSONObject.NULL).put("width",width.toDouble())
             .put("matrix",JSONArray(listOf(values[0],values[3],values[1],values[4],values[2],values[5]).map{it.toDouble()}))
     }
@@ -67,7 +77,12 @@ internal class VectorDocument(val width:Int,val height:Int,val dpi:Int=300,var b
     var layers=mutableListOf(VectorLayer(1,"Layer 1"));private set
     var active=0
     private var nextId=2L
-    private val undo=ArrayDeque<ByteArray>();private val redo=ArrayDeque<ByteArray>()
+    private class Snapshot(bytes:ByteArray){
+        private val compressed=bytes.size>16384
+        val data=if(compressed)java.io.ByteArrayOutputStream().also{out->java.util.zip.GZIPOutputStream(out).use{it.write(bytes)}}.toByteArray()else bytes
+        fun read()=if(compressed)java.util.zip.GZIPInputStream(data.inputStream()).use{it.readBytes()}else data
+    }
+    private val undo=ArrayDeque<Snapshot>();private val redo=ArrayDeque<Snapshot>()
     val undoCount get()=undo.size
     val redoCount get()=redo.size
     fun nextId():Long{check(nextId<Long.MAX_VALUE-10000){"Vector identifier limit reached"};return nextId++}
@@ -90,7 +105,7 @@ internal class VectorDocument(val width:Int,val height:Int,val dpi:Int=300,var b
     }
     fun edit(change:()->Unit){val before=encode();try{change();commit(before)}catch(e:Exception){restore(before);throw e}}
     fun commit(before:ByteArray){val after=encode();require(after.size<=MAX_BYTES){"Vector project is too large"}
-        require(layers.size in 1..32 && active in layers.indices){"Invalid Vector layers"}
+        require(layers.isNotEmpty() && active in layers.indices){"Invalid Vector layers"}
         require(layers.sumOf{it.objects.size}<=5000 && layers.sumOf{l->l.objects.sumOf{it.points.size}}<=250000){"Vector object/point limit reached"}
         for(layer in layers){require(layer.opacity.isFinite() && layer.opacity in 0f..1f)
             for(obj in layer.objects){require(obj.width.isFinite() && obj.width in .1f..1000f)
@@ -99,11 +114,11 @@ internal class VectorDocument(val width:Int,val height:Int,val dpi:Int=300,var b
             }
         }
         if(before.contentEquals(after))return
-        undo.addLast(before);redo.clear();trim()
+        undo.addLast(Snapshot(before));redo.clear();trim()
     }
-    private fun trim(){while(undo.size+redo.size>64 || undo.sumOf{it.size.toLong()}+redo.sumOf{it.size.toLong()}>32L*1024*1024){if(undo.size>1)undo.removeFirst() else if(redo.isNotEmpty())redo.removeFirst() else break}}
-    fun undo():Boolean{if(undo.isEmpty())return false;redo.addLast(encode());restore(undo.removeLast());trim();return true}
-    fun redo():Boolean{if(redo.isEmpty())return false;undo.addLast(encode());restore(redo.removeLast());trim();return true}
+    private fun trim(){while(undo.size+redo.size>64 || (undo.size+redo.size>30 && undo.sumOf{it.data.size.toLong()}+redo.sumOf{it.data.size.toLong()}>32L*1024*1024)){if(undo.size>1)undo.removeFirst() else if(redo.isNotEmpty())redo.removeFirst() else break}}
+    fun undo():Boolean{if(undo.isEmpty())return false;redo.addLast(Snapshot(encode()));restore(undo.removeLast().read());trim();return true}
+    fun redo():Boolean{if(redo.isEmpty())return false;undo.addLast(Snapshot(encode()));restore(redo.removeLast().read());trim();return true}
     fun draw(canvas:Canvas,includeBackground:Boolean=true,onlyLayer:VectorLayer?=null){
         if(onlyLayer==null && includeBackground && backgroundVisible)canvas.drawColor(background)
         val paint=Paint(Paint.ANTI_ALIAS_FLAG).apply{strokeCap=Paint.Cap.ROUND;strokeJoin=Paint.Join.ROUND}
@@ -135,6 +150,7 @@ internal class VectorDocument(val width:Int,val height:Int,val dpi:Int=300,var b
                         else if(obj.kind=="Line")d.append(" L${b.x} ${b.y}")
                         else if(obj.points.size==1)d.append(" L${a.x+.001f} ${a.y}")
                         else{for(i in 1 until obj.points.size){val p=obj.points[i-1];val q=obj.points[i];d.append(" Q${p.x} ${p.y} ${(p.x+q.x)/2} ${(p.y+q.y)/2}")};d.append(" L${b.x} ${b.y}")}
+                        if(obj.closed)d.append(" Z")
                         out.append("<path d=\"$d\" $attrs/>\n")
                     }
                 }
@@ -170,7 +186,7 @@ internal class VectorDocument(val width:Int,val height:Int,val dpi:Int=300,var b
             val w=json.getInt("width");val h=json.getInt("height");require(w in 16..8192 && h in 16..8192 && w.toLong()*h<=16_777_216){"Invalid canvas size"}
             val dpi=json.getInt("dpi");require(dpi in 1..2400)
             val doc=VectorDocument(w,h,dpi,json.getLong("background").toInt(),json.getBoolean("backgroundVisible"));val list=json.getJSONArray("layers")
-            require(list.length() in 1..32);doc.layers.clear();val ids=HashSet<Long>();var points=0;var objects=0
+            require(list.length()>0);doc.layers.clear();val ids=HashSet<Long>();var points=0;var objects=0
             fun number(v:Double):Float{require(v.isFinite() && abs(v)<=1_000_000){"Invalid Vector coordinates"};return v.toFloat()}
             for(i in 0 until list.length()){val l=list.getJSONObject(i);val id=l.getLong("id");require(id in 1 until Long.MAX_VALUE-10000 && ids.add(id));
                 val opacity=number(l.getDouble("opacity"));require(opacity in 0f..1f)
@@ -182,7 +198,7 @@ internal class VectorDocument(val width:Int,val height:Int,val dpi:Int=300,var b
                     val width=number(o.getDouble("width"));require(width in .1f..1000f)
                     val values=o.getJSONArray("matrix");require(values.length()==6);val m=FloatArray(6){number(values.getDouble(it))};require(abs(m[0]*m[3]-m[1]*m[2])>=1e-8){"Singular object transform"}
                     val matrix=Matrix().apply{setValues(floatArrayOf(m[0],m[2],m[4],m[1],m[3],m[5],0f,0f,1f))}
-                    layer.objects.add(VectorObject(oid,kind,coords,o.getLong("stroke").toInt(),if(o.isNull("fill"))null else o.getLong("fill").toInt(),width,matrix))
+                    layer.objects.add(VectorObject(oid,kind,coords,o.getLong("stroke").toInt(),if(o.isNull("fill"))null else o.getLong("fill").toInt(),width,matrix,o.optBoolean("closed",false)))
                 };doc.layers.add(layer)
             }
             doc.active=json.getInt("active");require(doc.active in doc.layers.indices);doc.nextId=ids.max()+1;return doc

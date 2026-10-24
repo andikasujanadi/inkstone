@@ -89,7 +89,7 @@ pub extern "system" fn Java_art_inkstone_NativeBridge_thumbnails(env:JNIEnv,_thi
     let mut pixels=Vec::with_capacity(e.state.layers.len()*size*size);
     for l in &e.state.layers {for y in 0..size {for x in 0..size {
         let sx=x*e.width/size;let sy=y*e.height/size;
-        pixels.push(l.pixels[sy*e.width+sx] as i32);
+        pixels.push(l.masked_pixel(sy*e.width+sx) as i32);
     }}}
     let Ok(array)=env.new_int_array(pixels.len() as i32) else{return std::ptr::null_mut();};
     if env.set_int_array_region(&array,0,&pixels).is_err(){return std::ptr::null_mut();}array.into_raw()
@@ -130,4 +130,16 @@ pub extern "system" fn Java_art_inkstone_NativeBridge_transformSnapshot(env:JNIE
     let mut guard=engines().lock().unwrap();let Some(e)=guard.get_mut(&id)else{return std::ptr::null_mut();};
     let data=e.transform_snapshot();let Ok(array)=env.new_int_array(data.len() as i32)else{return std::ptr::null_mut();};
     if env.set_int_array_region(&array,0,&data).is_err(){return std::ptr::null_mut();}array.into_raw()
+}
+
+#[no_mangle]
+pub extern "system" fn Java_art_inkstone_NativeBridge_importPsd(mut env:JNIEnv,_this:JObject,id:jlong,path:JString)->jstring{
+    let path:String=match env.get_string(&path){Ok(v)=>v.into(),Err(_)=>return output(&env,error("Invalid PSD path"))};
+    let result=(||->Result<Value,String>{
+        let file=std::fs::File::open(path).map_err(|e|e.to_string())?;
+        if file.metadata().map_err(|e|e.to_string())?.len()>128*1024*1024{return Err("PSD files must be smaller than 128 MiB".into());}
+        let mut bytes=vec![];use std::io::Read;file.take(128*1024*1024+1).read_to_end(&mut bytes).map_err(|e|e.to_string())?;
+        let (mut next,warnings)=Engine::read_psd(&bytes)?;let mut guard=engines().lock().unwrap();let slot=guard.get_mut(&id).ok_or("Drawing engine is closed")?;
+        next.set_renderer(&slot.renderer_requested.clone()).ok();let mut info=next.info();info["importWarnings"]=json!(warnings);*slot=next;Ok(info)
+    })().unwrap_or_else(error);output(&env,result)
 }

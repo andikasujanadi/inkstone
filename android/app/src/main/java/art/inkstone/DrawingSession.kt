@@ -96,6 +96,7 @@ class DrawingSession(width: Int, height: Int) : Closeable {
     var bitmap: Bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888); private set
     private val revision = AtomicLong(0)
     private val renderPending = AtomicBoolean(false)
+    internal var frameSerial=0L;private set
     var onFrame: () -> Unit = {}
     var onInfo: () -> Unit = {}
     var onError: (String) -> Unit = {}
@@ -145,7 +146,8 @@ class DrawingSession(width: Int, height: Int) : Closeable {
         set(value){if(field==value)return;field=value;onToolChange()}
     var fingerDrawing = true
     var guide = false
-    var symmetry = false
+    var symmetryMode="Off";private set
+    fun setSymmetry(mode:String){symmetryMode=mode;command("symmetry",JSONObject().put("mode",mode))}
     var cursor = true
     var cursorStyle="Contrast"
     var cursorOpacity=1f
@@ -167,6 +169,7 @@ class DrawingSession(width: Int, height: Int) : Closeable {
 
     fun stroke(phase: Int, samples: FloatArray, eraser: Boolean = false) {
         if (closed) return
+        if(info.optBoolean("maskEditing") && tool=="Smudge"){if(phase==0)onError("Use Paint or Erase to edit a layer mask");return}
         if(phase==0)penActive=true
         if(phase==2||phase==3)penActive=false
         val erasing=eraser||tool=="Erase"
@@ -197,6 +200,27 @@ class DrawingSession(width: Int, height: Int) : Closeable {
     }
     private fun sendStroke(phase:Int,samples:FloatArray,s:StrokeSettings){
         NativeBridge.stroke(handle,phase,samples,s.kind,s.color,s.size,s.opacity,s.flow,s.smooth,s.pressureSize,s.pressureOpacity)
+    }
+
+    private var pendingShape:Pair<StrokeSettings,FloatArray>?=null
+    private var shapeQueued=false
+    internal fun previewQuickShape(samples:FloatArray){
+        if(closed || samples.size<4)return
+        penActive=true
+        val settings=StrokeSettings(preset.kind,color,if(dynamicBrushScaling)size else size/viewZoom.coerceAtLeast(.02f),opacity,flow,0f,if(pressureEnabled)pressureSize else 0f,if(pressureEnabled)pressureOpacity else 0f)
+        synchronized(inputLock){
+            pendingMoves=null;pendingShape=settings to samples
+            if(shapeQueued)return
+            shapeQueued=true
+            worker.execute{
+                val latest=synchronized(inputLock){val value=pendingShape;pendingShape=null;shapeQueued=false;value}
+                if(!disposed && latest!=null){
+                    val (s,points)=latest;sendStroke(3,floatArrayOf(),s);sendStroke(0,points.copyOfRange(0,4),s)
+                    if(points.size>4)sendStroke(1,points.copyOfRange(4,points.size),s)
+                    changed()
+                }
+            }
+        }
     }
 
     private var pendingDrop:JSONObject?=null
@@ -240,7 +264,7 @@ class DrawingSession(width: Int, height: Int) : Closeable {
 
     private fun readInfo() {
         info = JSONObject(NativeBridge.command(handle, "{\"op\":\"info\"}"))
-        main.post { if (!closed) onInfo() }
+        main.post { if (!closed) { if(!info.isNull("inputError"))onError(info.getString("inputError"));onInfo() } }
     }
 
     private fun changed() { revision.incrementAndGet(); requestRender() }
@@ -257,7 +281,7 @@ class DrawingSession(width: Int, height: Int) : Closeable {
                 if (!closed && patch!=null) {
                     if(resize)bitmap=Bitmap.createBitmap(w,h,Bitmap.Config.ARGB_8888)
                     bitmap.setPixels(patch,4,patch[2],patch[0],patch[1],patch[2],patch[3])
-                    onFrame()
+                    frameSerial++;onFrame()
                 }
                 renderPending.set(false)
                 if (!closed && revision.get() != version) requestRender()
@@ -333,6 +357,15 @@ class DrawingSession(width: Int, height: Int) : Closeable {
         }
     }
 
+    fun importPsd(file:java.io.File,then:(String?,List<String>)->Unit){
+        worker.execute{
+            val result=runCatching{JSONObject(NativeBridge.importPsd(handle,file.absolutePath))};file.delete()
+            val value=result.getOrNull();val error=result.exceptionOrNull()?.message?:value?.optString("error")?.takeIf{it.isNotEmpty()}
+            if(error==null && value!=null){info=value;changed()}
+            val warnings=value?.optJSONArray("importWarnings")?.let{a->(0 until a.length()).map{a.getString(it)}}?:emptyList()
+            main.post{if(!closed)then(error,warnings)}
+        }
+    }
     fun import(image: Bitmap, then: () -> Unit) {
         beforeSnapshot()
         val data = IntArray(image.width * image.height)

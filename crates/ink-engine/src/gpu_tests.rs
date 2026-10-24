@@ -339,3 +339,31 @@ fn physical_gpu_affine_transform_composite_and_undo() {
         if step==0 {assert!(e.undo());assert_eq!(original,e.save().unwrap());}else if step==1 {assert!(e.redo());}
     }
 }
+
+#[test]
+#[ignore="Requires a physical Metal or Vulkan adapter"]
+fn physical_gpu_symmetry_masks_and_fallback(){
+    let mut gpu=gpu_engine(192,128);let mut cpu=Engine::new(192,128).unwrap();
+    for e in [&mut gpu,&mut cpu]{
+        e.command(&json!({"op":"symmetry","mode":"Quadrant"})).unwrap();
+        e.begin(Sample{x:28.0,y:25.0,pressure:1.0,tilt:0.0},Brush{size:40.0,pressure_size:0.0,stabilization:0.0,color:0xffdd5533,..Brush::default()});e.sample(Sample{x:60.0,y:45.0,pressure:1.0,tilt:0.0});e.end();
+        e.command(&json!({"op":"mask"})).unwrap();e.begin(Sample{x:28.0,y:25.0,pressure:1.0,tilt:0.0},Brush{size:18.0,pressure_size:0.0,color:0xff000000,..Brush::default()});e.end();
+    }
+    assert_eq!(gpu.state.layers[0].pixels,cpu.state.layers[0].pixels);assert_eq!(gpu.state.layers[0].mask,cpu.state.layers[0].mask);
+    let a=gpu.render_patch(true).unwrap();let b=cpu.render_patch(true).unwrap();assert_eq!(a,b);assert!(gpu.gpu.is_some());
+    for e in [&mut gpu,&mut cpu]{e.command(&json!({"op":"mask","action":"delete"})).unwrap();e.command(&json!({"op":"mask","action":"pixels"})).unwrap();}
+    gpu.gpu.as_ref().unwrap().destroy_for_test();
+    for e in [&mut gpu,&mut cpu]{e.begin(Sample{x:40.0,y:80.0,pressure:1.0,tilt:0.0},Brush{size:40.0,pressure_size:0.0,color:0xff55aa66,..Brush::default()});e.end();}
+    assert!(gpu.gpu.is_none());assert_eq!(gpu.state.layers[0].pixels,cpu.state.layers[0].pixels);
+}
+
+#[test]
+#[ignore="Requires a physical Metal or Vulkan adapter"]
+fn many_empty_layers_render_background_then_gpu_stroke(){
+    let mut e=gpu_engine(512,512);
+    for _ in 0..70{e.command(&json!({"op":"add"})).unwrap();}
+    let frame=e.render_patch(true).unwrap();assert_eq!(frame[4] as u32,e.state.background);
+    e.begin(Sample{x:100.,y:100.,pressure:1.,tilt:0.},Brush{size:48.,color:0xffff0000,pressure_size:0.,..Brush::default()});e.end();
+    let patch=e.render_patch(true).unwrap();assert_eq!(patch[4+100*512+100] as u32,0xffff0000);
+    assert_eq!(e.info()["renderer"],"gpu");
+}

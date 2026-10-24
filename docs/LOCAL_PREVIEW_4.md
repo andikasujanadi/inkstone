@@ -16,7 +16,7 @@ Insert a photo, or choose an existing layer and start Transform. The blue box fo
 - Smaller, Larger, Flip and Rotate 45° update the same live preview immediately.
 - Done applies the complete transform once, as one Undo action. Cancel restores the state before entering the transform session. Canceling an interrupted touch gesture restores that gesture's initial matrix.
 
-Strict Pen-only input still rejects finger input, including two-finger transforms. Turn it off to use touch gestures. The canvas position lock does not prevent object transformation.
+Updated in 0.1.8-preview2: Pen-only restricts drawing strokes; two-finger transforms and navigation remain available. The canvas position lock does not prevent object transformation.
 
 ## Rendering and lifecycle
 
