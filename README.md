@@ -1,6 +1,6 @@
 # Inkstone — Drawing for Android
 
-Inkstone is an open-source drawing app for Android tablets and pressure-sensitive pens, built with a native Kotlin interface and a Rust drawing engine.
+Inkstone is a source-available drawing app for Android tablets and pressure-sensitive pens, built with a native Kotlin interface and a Rust drawing engine.
 
 **Early development:** features are incomplete, bugs are expected, and more improvements are on the way. Vector mode is experimental. Keep exported backups of important artwork and share device feedback through [Issues](https://github.com/bramastahartono20/inkstone/issues).
 
@@ -75,4 +75,10 @@ Android tests use Robolectric native graphics and the real host JNI library. `sc
 
 ## License
 
-Project code is [MIT licensed](LICENSE). Dependencies retain their own licenses. Vector anchor picking includes an MIT-licensed adaptation credited in [third_party/vectorcraft](third_party/vectorcraft/README.md); its notice is included in the APK.
+Current Inkstone-owned source is available under [PolyForm Noncommercial 1.0.0](LICENSE), with an [additional artwork-use permission](ADDITIONAL_PERMISSIONS.md). You may study, modify, and share the code for permitted noncommercial purposes. Commercial reuse or distribution as a software product requires separate written permission unless already covered by an applicable license grant.
+
+**Artists may use Inkstone for paid work and sell their artwork.** The software license does not apply to your artwork merely because you created it with Inkstone.
+
+**Previously published versions through 0.1.8 remain MIT-licensed.** Their original grants cannot be withdrawn by this change; the published APK and source archive retain their existing terms. The new licensing starts with the subsequent licensing-change commit. See [licensing details and version history](docs/LICENSING.md).
+
+Dependencies retain their own licenses. Vector anchor picking includes an MIT-licensed adaptation credited in [third_party/vectorcraft](third_party/vectorcraft/README.md); its notice is included in the APK.
