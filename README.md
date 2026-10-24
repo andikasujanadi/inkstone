@@ -75,6 +75,8 @@ Android tests use Robolectric native graphics and the real host JNI library. `sc
 
 ## License
 
+**PolyForm Noncommercial 1.0.0 + artwork-use permission.** Copyright (c) 2026 Vincentius Bramasta Hartono, the sole author and copyright holder of Inkstone-owned code.
+
 Current Inkstone-owned source is available under [PolyForm Noncommercial 1.0.0](LICENSE), with an [additional artwork-use permission](ADDITIONAL_PERMISSIONS.md). You may study, modify, and share the code for permitted noncommercial purposes. Commercial reuse or distribution as a software product requires separate written permission unless already covered by an applicable license grant.
 
 **Artists may use Inkstone for paid work and sell their artwork.** The software license does not apply to your artwork merely because you created it with Inkstone.

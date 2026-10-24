@@ -130,6 +130,6 @@ software under these terms.
 **Use** means anything you do with the software requiring one
 of your licenses.
 
-Required Notice: Copyright (c) 2026 Vincentius Bramasta Hartono and Inkstone contributors.
+Required Notice: Copyright (c) 2026 Vincentius Bramasta Hartono.
 Required Notice: Inkstone includes the additional artwork-use permission in ADDITIONAL_PERMISSIONS.md. Preserve that permission with redistributions.
 Required Notice: Third-party components retain their own licenses; see third_party/ and packaged notices.

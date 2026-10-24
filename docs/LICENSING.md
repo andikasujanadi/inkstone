@@ -1,5 +1,9 @@
 # Inkstone licensing
 
+## Copyright holder
+
+Vincentius Bramasta Hartono is the sole author and copyright holder of Inkstone-owned code. No additional first-party contributors are currently listed. Third-party components have their own authors and notices.
+
 ## Current source
 
 Starting with the licensing-change commit after tag `v0.1.8`, Inkstone-owned code is source-available under the [PolyForm Noncommercial License 1.0.0](../LICENSE), with the [additional artwork-use permission](../ADDITIONAL_PERMISSIONS.md). Source-available means you can inspect the source; this is not an OSI-approved open-source license.
@@ -12,13 +16,15 @@ You may use Inkstone for paid commissions, freelance or studio work, and sell, l
 
 ## Earlier MIT releases
 
-Tag `v0.1.8` (commit `5b2c76c3d71c1da88ec8c6778783ad6deb8f7093`) and earlier published versions were released under MIT. The existing APK, source archive, tags, and Git history for those releases remain under their original terms. A copy of that notice is preserved at [licenses/legacy/MIT-through-v0.1.8.txt](../licenses/legacy/MIT-through-v0.1.8.txt).
+Tag `v0.1.8` (commit `5b2c76c3d71c1da88ec8c6778783ad6deb8f7093`) and earlier published versions were released under MIT. The existing APK, source archive, tags, and Git history for those releases remain under their original terms. The MIT terms, with the first-party copyright-holder name clarified, are preserved at [licenses/legacy/MIT-through-v0.1.8.txt](../licenses/legacy/MIT-through-v0.1.8.txt).
+
+The historical “Inkstone contributors” wording referred to Vincentius Bramasta Hartono; it did not identify additional first-party contributors. Published tags and release assets retain their original notices.
 
 Existing MIT grants remain available, including their commercial permissions. This transition does not retroactively restrict previously MIT-licensed code, including when that code also appears in a later checkout. New Inkstone-owned changes distributed only under the new terms are subject to those new terms. Check the license supplied with the version and code you use.
 
 ## Third-party components
 
-The change applies only to rights held by Inkstone's copyright holders. Dependency and third-party licenses remain in force. In particular, the VectorCraft adaptation retains its [MIT license and attribution](../third_party/vectorcraft/README.md), with its notice also bundled in Android assets. Do not remove or replace third-party notices with Inkstone's license.
+The change applies only to rights held by Inkstone's copyright holder. Dependency and third-party licenses remain in force. In particular, the VectorCraft adaptation retains its [MIT license and attribution](../third_party/vectorcraft/README.md), with its notice also bundled in Android assets. Do not remove or replace third-party notices with Inkstone's license.
 
 New Android builds bundle LICENSE, ADDITIONAL_PERMISSIONS.md, and this licensing history alongside the existing VectorCraft notice. No replacement APK or retroactive relicensing of the published 0.1.8 assets is part of this change.
 
