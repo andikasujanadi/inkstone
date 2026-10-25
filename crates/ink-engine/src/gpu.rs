@@ -18,6 +18,7 @@ pub struct Params {
     pub region: [u32; 4],
 }
 pub struct Dab {
+    pub distance:f32,
     pub params: Params,
     pub sample: Sample,
 }
@@ -231,9 +232,9 @@ impl Gpu {
             mapped_at_creation: false,
         })
     }
-    pub fn selection(&mut self, selection: Option<&[bool]>) {
+    pub fn selection(&mut self, selection: Option<&[bool]>, alpha:Option<&[u8]>) {
         let values: Vec<u32> = selection
-            .map(|s| s.iter().map(|v| *v as u32).collect())
+            .map(|s| s.iter().enumerate().map(|(i,v)|alpha.map_or(if *v{255}else{0},|a|a[i] as u32)).collect())
             .unwrap_or_else(|| vec![0]);
         self.selection = Self::upload(
             &self.device,

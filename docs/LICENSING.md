@@ -2,7 +2,7 @@
 
 ## Copyright holder
 
-Vincentius Bramasta Hartono is the sole author and copyright holder of Inkstone-owned code. No additional first-party contributors are currently listed. Third-party components have their own authors and notices.
+Vincentius Bramasta Hartono is the creator and maintainer of Inkstone. Version 0.1.9-preview3 integrates changes by andikasujanadi from PR #1 (commit f19aa0903aed00e6a84bc3e4e86d42cd712f73cc), with local compatibility and regression fixes. Contribution credit does not imply a transfer of copyright. Third-party components retain their own authors and notices.
 
 ## Current source
 

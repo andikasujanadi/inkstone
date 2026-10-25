@@ -549,3 +549,87 @@ fn many_duplicated_layers_reload_without_copying_every_bitmap(){
     assert_eq!(Engine::layer_bytes(&loaded.state.layers),128*128*4);
     assert_eq!(loaded.color_at(20,20,false),0xff123456);
 }
+
+#[test]
+fn fade_tail_keeps_width_and_long_strokes_resets_and_is_undoable(){
+    let mut e=Engine::new(640,160).unwrap();
+    let brush=Brush{size:28.,color:0xff2255ff,fade_length:300.,pressure_size:0.,stabilization:0.,..Brush::default()};
+    e.begin(Sample{x:20.,y:60.,pressure:1.,tilt:0.},brush);e.sample(Sample{x:620.,y:60.,pressure:1.,tilt:0.});e.end();
+    let alpha=|e:&Engine,x:usize,y:usize|e.state.layers[0].pixels[y*640+x]>>24;
+    assert!(alpha(&e,35,60)>200);assert!(alpha(&e,550,60)<alpha(&e,35,60));assert!(alpha(&e,400,60)>0);assert_eq!(alpha(&e,639,60),0);
+    assert!(alpha(&e,220,70)>0);assert!(alpha(&e,35,70)>0);
+    assert_eq!(e.undo.len(),1);let saved=e.save().unwrap();assert!(e.undo());assert_eq!(alpha(&e,35,60),0);assert!(e.redo());assert_eq!(saved,e.save().unwrap());
+    e.begin(Sample{x:20.,y:120.,pressure:1.,tilt:0.},brush);e.sample(Sample{x:620.,y:120.,pressure:1.,tilt:0.});e.end();assert!(alpha(&e,35,120)>200);
+    e.begin(Sample{x:20.,y:25.,pressure:1.,tilt:0.},brush);e.sample(Sample{x:200.,y:25.,pressure:1.,tilt:0.});e.cancel();assert_eq!(alpha(&e,35,25),0);
+}
+
+#[test]
+fn fade_is_independent_of_input_batch_count(){
+    let draw=|count:usize|{
+        let mut e=Engine::new(640,100).unwrap();let brush=Brush{size:36.,fade_length:300.,pressure_size:0.,stabilization:0.,..Brush::default()};
+        e.begin(Sample{x:20.,y:50.,pressure:1.,tilt:0.},brush);
+        for i in 1..=count{e.sample(Sample{x:20.+600.*i as f32/count as f32,y:50.,pressure:1.,tilt:0.});}e.end();e.state.layers[0].pixels.clone()
+    };
+    let one=draw(1);let many=draw(120);
+    let max=one.iter().zip(many.iter()).map(|(a,b)|((*a>>24) as i32-(*b>>24) as i32).abs()).max().unwrap();assert!(max<=1,"batch-dependent fade: {max}");
+}
+
+#[test]
+fn mid_stroke_brush_updates_use_eraser_profile_and_keep_one_undo(){
+    let mut e=Engine::new(320,240).unwrap();e.command(&json!({"op":"fill","color":0xffff0000u32})).unwrap();
+    let sample=|x|Sample{x,y:120.,pressure:1.,tilt:0.};
+    e.begin(sample(60.),Brush{size:4.,color:0xff0000ff,pressure_size:0.,stabilization:0.,..Brush::default()});
+    e.update_brush(Brush{kind:64,size:40.,color:255,pressure_size:0.,stabilization:0.,..Brush::default()});e.sample(sample(180.));e.end();
+    assert_eq!(e.state.layers[0].pixels[132*320+140]>>24,0);assert_eq!(e.state.layers[0].pixels[149*320+140],0xffff0000);
+    assert_eq!(e.undo.len(),2);assert!(e.undo());assert_eq!(e.state.layers[0].pixels[132*320+140],0xffff0000);assert!(e.redo());assert_eq!(e.state.layers[0].pixels[132*320+140]>>24,0);
+}
+
+#[test]
+fn selection_modes_automatic_feather_and_named_roundtrip(){
+    let mut e=Engine::new(40,32).unwrap();
+    e.command(&json!({"op":"select","shape":"Rectangle","points":[[4,4],[20,20]]})).unwrap();
+    e.command(&json!({"op":"select","mode":"Add","shape":"Rectangle","points":[[16,16],[32,28]]})).unwrap();
+    assert_eq!(e.selection_coverage(25*40+25),255);assert_eq!(e.selection_coverage(8*40+8),255);assert_eq!(e.selection_coverage(30*40+2),0);
+    e.command(&json!({"op":"select","mode":"Remove","shape":"Rectangle","points":[[8,8],[12,12]]})).unwrap();assert_eq!(e.selection_coverage(10*40+10),0);
+    e.command(&json!({"op":"selectionFeather","radius":3})).unwrap();let soft=e.selection_alpha.clone().unwrap();assert!(soft.iter().any(|a|*a>0 && *a<255));
+    e.command(&json!({"op":"selectionSave","name":"Subject"})).unwrap();let bytes=e.save().unwrap();let mut loaded=Engine::load(&bytes).unwrap();loaded.command(&json!({"op":"selectionLoad","name":"Subject"})).unwrap();assert_eq!(loaded.selection_alpha.as_ref().unwrap(),&soft);
+    e.command(&json!({"op":"selectionFeather","radius":0})).unwrap();assert!(e.selection_alpha.as_ref().unwrap().iter().all(|a|*a==0 || *a==255));
+    e.command(&json!({"op":"deselect"})).unwrap();for y in 0..32{for x in 0..20{Arc::make_mut(&mut e.state.layers[0].pixels)[y*40+x]=0xffff0000;}}
+    e.command(&json!({"op":"selectionAutomatic","x":4,"y":4,"threshold":0.01})).unwrap();assert_eq!(e.selection_coverage(10*40+10),255);assert_eq!(e.selection_coverage(10*40+30),0);
+    e.command(&json!({"op":"invertSelection"})).unwrap();assert_eq!(e.selection_coverage(10*40+10),0);assert_eq!(e.selection_coverage(10*40+30),255);
+}
+
+#[test]
+fn selection_clipboard_fill_clear_and_feather_alpha_are_undoable(){
+    let mut e=Engine::new(40,32).unwrap();e.command(&json!({"op":"fill","color":0xffff0000u32})).unwrap();
+    e.command(&json!({"op":"select","shape":"Rectangle","points":[[8,8],[24,24]]})).unwrap();e.command(&json!({"op":"selectionFeather","radius":2})).unwrap();
+    let index=10*40+8;let coverage=e.selection_coverage(index);assert!(coverage>0 && coverage<255);
+    e.command(&json!({"op":"selectionCopyPaste"})).unwrap();assert_eq!(e.state.layers.len(),2);assert_eq!(e.state.layers[1].pixels[index]>>24,coverage as u32);assert!(e.undo());assert_eq!(e.state.layers.len(),1);assert!(e.redo());assert_eq!(e.state.layers.len(),2);
+    e.command(&json!({"op":"select","shape":"Rectangle","points":[[8,8],[24,24]]})).unwrap();let before=e.save().unwrap();e.command(&json!({"op":"selectionClear"})).unwrap();assert_eq!(e.state.layers[1].pixels[index]>>24,0);assert!(e.undo());assert_eq!(before,e.save().unwrap());
+    e.command(&json!({"op":"selectionFill","color":0xff0044ffu32})).unwrap();assert_eq!(e.state.layers[1].pixels[16*40+16],0xff0044ff);assert!(e.undo());
+    e.command(&json!({"op":"selectionCut"})).unwrap();assert!(e.info()["clipboard"].as_bool().unwrap());assert_eq!(e.state.layers[1].pixels[16*40+16]>>24,0);
+    e.command(&json!({"op":"selectionPaste"})).unwrap();assert_eq!(e.state.layers.len(),3);assert!(e.state.layers[2].pixels[16*40+16]>>24>0);
+}
+
+#[test]
+fn projective_and_mesh_transforms_reject_folds_and_keep_undo_pixels(){
+    let mut e=Engine::new(64,64).unwrap();for y in 10..40{for x in 10..40{Arc::make_mut(&mut e.state.layers[0].pixels)[y*64+x]=if x<25{0xffff0000}else{0xff0044ff};}}
+    let before=e.save().unwrap();e.transform_projective([1.,0.,0.,0.,1.,0.,0.01,0.,1.],"Nearest").unwrap();assert_eq!(e.state.layers[0].pixels[15*64+15],0xffff0000);assert_eq!(e.state.layers[0].pixels[38*64+38],0);assert!(e.undo());assert_eq!(before,e.save().unwrap());
+    let points:Vec<_>=(0..=2).flat_map(|y|(0..=2).map(move|x|(10.+15.*x as f32+5.,10.+15.*y as f32+3.))).collect();e.transform_mesh(2,2,&points,"Nearest").unwrap();assert_eq!(e.state.layers[0].pixels[13*64+15],0xffff0000);assert_eq!(e.state.layers[0].pixels[13*64+40],0xff0044ff);assert!(e.undo());assert_eq!(before,e.save().unwrap());
+    let mut folded=points.clone();folded[4]=(60.,60.);assert!(e.transform_mesh(2,2,&folded,"Bilinear").is_err());assert_eq!(before,e.save().unwrap());
+    assert!(e.transform_projective([1.,0.,0.,0.,1.,0.,-0.04,0.,1.],"Bilinear").is_err());assert_eq!(before,e.save().unwrap());
+}
+
+#[test]
+fn fade_keeps_a_tap_and_short_strokes_visible(){
+    let mut e=Engine::new(128,64).unwrap();let b=Brush{size:20.,fade_length:150.,pressure_size:0.,stabilization:0.,..Brush::default()};
+    e.begin(Sample{x:20.,y:20.,pressure:1.,tilt:0.},b);e.end();assert!(e.state.layers[0].pixels[20*128+20]>>24>200);
+    e.begin(Sample{x:60.,y:40.,pressure:1.,tilt:0.},b);e.sample(Sample{x:85.,y:40.,pressure:1.,tilt:0.});e.end();assert!(e.state.layers[0].pixels[40*128+60]>>24>200);
+}
+
+#[test]
+fn finishing_fade_refreshes_the_whole_live_tail_without_ghost_pixels(){
+    let mut e=Engine::new(320,96).unwrap();let mut display=e.render_patch(true).unwrap()[4..].to_vec();
+    let apply=|display:&mut Vec<i32>,patch:Vec<i32>|{let(x,y,w,h)=(patch[0] as usize,patch[1] as usize,patch[2] as usize,patch[3] as usize);for row in 0..h{display[(y+row)*320+x..(y+row)*320+x+w].copy_from_slice(&patch[4+row*w..4+(row+1)*w]);}};
+    e.begin(Sample{x:20.,y:48.,pressure:1.,tilt:0.},Brush{size:28.,fade_length:100.,pressure_size:0.,stabilization:0.,..Brush::default()});e.sample(Sample{x:270.,y:48.,pressure:1.,tilt:0.});apply(&mut display,e.render_patch(false).unwrap());e.end();apply(&mut display,e.render_patch(false).unwrap());assert_eq!(display,&e.render_patch(true).unwrap()[4..]);
+}

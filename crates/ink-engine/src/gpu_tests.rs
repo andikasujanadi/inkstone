@@ -367,3 +367,30 @@ fn many_empty_layers_render_background_then_gpu_stroke(){
     let patch=e.render_patch(true).unwrap();assert_eq!(patch[4+100*512+100] as u32,0xffff0000);
     assert_eq!(e.info()["renderer"],"gpu");
 }
+
+#[test]
+#[ignore="Requires a physical Metal or Vulkan adapter"]
+fn physical_gpu_fade_and_midstroke_eraser_match_cpu(){
+    fn draw(e:&mut Engine){
+        e.command(&json!({"op":"fill","color":0xffcc8844u32})).unwrap();
+        e.begin(Sample{x:20.,y:60.,pressure:1.,tilt:0.},Brush{size:64.,fade_length:300.,pressure_size:0.,stabilization:0.,color:0xff2255cc,..Brush::default()});
+        e.sample(Sample{x:620.,y:60.,pressure:1.,tilt:0.});e.end();
+        e.begin(Sample{x:20.,y:140.,pressure:1.,tilt:0.},Brush{size:48.,pressure_size:0.,stabilization:0.,..Brush::default()});
+        e.sample(Sample{x:80.,y:140.,pressure:1.,tilt:0.});
+        e.update_brush(Brush{kind:66,size:80.,color:180,pressure_size:0.,stabilization:0.,..Brush::default()});e.sample(Sample{x:300.,y:140.,pressure:1.,tilt:0.});e.end();
+    }
+    let mut gpu=gpu_engine(640,200);let mut cpu=Engine::new(640,200).unwrap();draw(&mut gpu);draw(&mut cpu);
+    let error=gpu.state.layers[0].pixels.iter().zip(cpu.state.layers[0].pixels.iter()).flat_map(|(a,b)|[0,8,16,24].map(|shift|(((a>>shift)&255) as i32-((b>>shift)&255) as i32).abs())).max().unwrap();
+    assert!(error<=3,"CPU/GPU fade mismatch {error}");assert_eq!(gpu.info()["renderer"],"gpu");
+}
+
+#[test]
+#[ignore="Requires a physical Metal or Vulkan adapter"]
+fn physical_gpu_feathered_selection_matches_cpu(){
+    fn paint(e:&mut Engine){
+        e.command(&json!({"op":"select","shape":"Rectangle","points":[[30,20],[100,100]]})).unwrap();e.command(&json!({"op":"selectionFeather","radius":8})).unwrap();
+        e.begin(Sample{x:10.,y:60.,pressure:1.,tilt:0.},Brush{size:50.,pressure_size:0.,stabilization:0.,color:0xff2288cc,..Brush::default()});e.sample(Sample{x:120.,y:60.,pressure:1.,tilt:0.});e.end();
+    }
+    let mut gpu=gpu_engine(128,128);let mut cpu=Engine::new(128,128).unwrap();paint(&mut gpu);paint(&mut cpu);
+    let error=gpu.state.layers[0].pixels.iter().zip(cpu.state.layers[0].pixels.iter()).flat_map(|(a,b)|[0,8,16,24].map(|shift|(((a>>shift)&255) as i32-((b>>shift)&255) as i32).abs())).max().unwrap();assert!(error<=3,"Feather CPU/GPU difference {error}");assert!(gpu.state.layers[0].pixels[60*128+30]>>24>0);assert_eq!(gpu.state.layers[0].pixels[60*128+5]>>24,0);
+}

@@ -42,6 +42,7 @@ class StudioTest {
             if(v is ViewGroup)for(i in 0 until v.childCount)find(v.getChildAt(i))?.let{return it}
             return null
         }
+        if(find(root)==null && root is EditorView && root.session.tool=="Transform" && description in listOf("Smaller","Larger","Flip H","Flip V","Rotate 45°","Fit to Canvas")){fun group(v:View):View?{if(v.contentDescription=="Adjust")return v;if(v is ViewGroup)for(i in 0 until v.childCount)group(v.getChildAt(i))?.let{return it};return null};assertTrue(checkNotNull(group(root)).performClick());shadowOf(Looper.getMainLooper()).idle()}
         val v=checkNotNull(find(root)){"No control named $description"};assertTrue(v.performClick());shadowOf(Looper.getMainLooper()).idle()
     }
     private fun render(view:View,name:String,w:Int=1280,h:Int=800) {
@@ -418,7 +419,7 @@ class StudioTest {
         val seek=checkNotNull(named(e,"Stabilization")) as android.widget.SeekBar
         repeat(100){seek.onKeyDown(android.view.KeyEvent.KEYCODE_DPAD_RIGHT,android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN,android.view.KeyEvent.KEYCODE_DPAD_RIGHT))}
         assertEquals(.95f,s.stabilization,.001f)
-        click(e,"Done");click(e,"Actions");click(e,"Prefs");click(e,"Pressure and Smoothing")
+        click(e,"Done");assertNotNull(named(e,"Prefs"));e.dismissPanel();click(e,"Actions");click(e,"Prefs");click(e,"Pressure and Smoothing")
         assertEquals(100,(checkNotNull(named(e,"Stabilization")) as android.widget.SeekBar).progress)
         render(e,"feedback-stabilizer-100");e.dismissPanel();a.newCanvas(320,240)
         assertEquals(.95f,checkNotNull(a.session).stabilization,.001f)

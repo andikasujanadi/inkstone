@@ -8,7 +8,7 @@ object NativeBridge {
     external fun destroy(handle: Long)
     external fun command(handle: Long, json: String): String
     external fun stroke(handle: Long, phase: Int, samples: FloatArray, kind: Int, color: Int,
-        size: Float, opacity: Float, flow: Float, stabilization: Float, pressureSize: Float, pressureOpacity: Float)
+        size: Float, opacity: Float, flow: Float, stabilization: Float, pressureSize: Float, pressureOpacity: Float, fadeLength:Float=0f)
     external fun render(handle: Long, pixels: ByteBuffer, background: Boolean): Boolean
     external fun renderPatch(handle: Long, force: Boolean): IntArray?
     external fun preview(handle: Long): IntArray?

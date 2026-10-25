@@ -38,3 +38,7 @@ The current preview also includes [node editing, stabilization and ColorDrop cor
 ## Local 0.1.8-preview3
 
 ColorDrop now fills closed Vector paths. In Nodes, Close path connects the path back to its start; Join ends joins another open path in the same layer while preserving transforms. The closed flag survives native saves and SVG export. Two-/three-finger taps provide Undo/Redo, configurable in Vector Prefs. History retains up to 64 compressed snapshots, with a 30-step minimum under its memory budget. See [LOCAL_WORKFLOWS.md](LOCAL_WORKFLOWS.md) for exact usage and limits.
+
+## Unpublished local color fix — 0.1.9-preview1
+
+Wheel and valid hex edits update the active drawing/ColorDrop ink immediately. Stroke/Fill apply the chosen color to a selected object explicitly. Toolbar drag-fill now uses the current active color after either kind of edit. Framework event tests passed; retest on the device that reported the original issue. See [LOCAL_PREVIEW_019.md](LOCAL_PREVIEW_019.md).

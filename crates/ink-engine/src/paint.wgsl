@@ -60,7 +60,8 @@ fn sample_tip(pos:vec2<f32>)->u32{
  if(shape>=16u && shape<=31u){let hard=f32(shape-16u)/15.0*0.95;let t=clamp((1.0-d)/(1.0-hard),0.0,1.0);texture=t*t*(3.0-2.0*t);}
  var hardness=1.0;
  if(p.canvas.z>=64u && p.canvas.z<=78u && (p.flags.x&255u)<255u){let hard=f32(p.flags.x&255u)/255.0*0.95;let t=clamp((1.0-d)/(1.0-hard),0.0,1.0);hardness=t*t*(3.0-2.0*t);}
- let alpha=clamp(p.dab.w*edge*texture*hardness,0.0,1.0);let dst=pixels[i];let lock=p.canvas.w!=0u;
+ var coverage=1.0;if(p.flags.z!=0u){coverage=f32(selection[i])/255.0;}
+ let alpha=clamp(p.dab.w*edge*texture*hardness*coverage,0.0,1.0);let dst=pixels[i];let lock=p.canvas.w!=0u;
  if(smudging){
   let carried=sample_tip((delta/radius+1.0)*16.0-0.5);var mask=edge;
   switch(shape){
@@ -69,7 +70,7 @@ fn sample_tip(pos:vec2<f32>)->u32{
   case 7u,10u,11u,12u,13u,14u:{mask=min(texture,1.0)*edge;}
   default:{}
   }
-  let c=mix_rgba(dst,carried,clamp(p.dab.w*mask*0.32,0.0,1.0));pixels[i]=select(c,(c&0xffffffu)|(dst&0xff000000u),lock);
+  let c=mix_rgba(dst,carried,clamp(p.dab.w*mask*0.32*coverage,0.0,1.0));pixels[i]=select(c,(c&0xffffffu)|(dst&0xff000000u),lock);
  }else if(p.canvas.z==5u || (p.canvas.z>=16u && p.canvas.z<=31u) || (p.canvas.z>=64u && p.canvas.z<=78u)){if(!lock){pixels[i]=(dst&0xffffffu)|(u32(f32(dst>>24u)*(1.0-alpha)+0.5)<<24u);}}
  else if(lock){if(dst>>24u!=0u){pixels[i]=(over(dst|0xff000000u,p.flags.x|0xff000000u,alpha)&0xffffffu)|(dst&0xff000000u);}}
  else{pixels[i]=over(dst,p.flags.x,alpha);}

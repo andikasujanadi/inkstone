@@ -12,7 +12,7 @@ internal class TransformSnapshot(val info:JSONObject,val active:Int,val bounds:R
     fun recycle(){planes.forEach{it.image?.recycle()}}
     companion object{
         fun decode(info:JSONObject,data:IntArray):TransformSnapshot{
-            require(data.size>=6);val count=data[0];require(count in 1..64 && data[1] in 0 until count)
+            require(data.size>=6);val count=data[0];require(count>=1 && count<=(data.size-6)/6 && data[1] in 0 until count)
             val planes=mutableListOf<TransformPlane>();var offset=6
             try{repeat(count+1){
                 require(offset+6<=data.size);val rect=RectF(data[offset].toFloat(),data[offset+1].toFloat(),data[offset+2].toFloat(),data[offset+3].toFloat())
@@ -38,12 +38,23 @@ internal class RasterTransform(private val canvas:PaintCanvas,private val sessio
     private var pointerA=-1;private var pointerB=-1
     private var pen=false
     private var origin=PointF();private var localOrigin=PointF();private var anchor=PointF();private var corner=PointF()
+    var mode="Uniform"
+    var snapping=false
+    var interpolation="Bilinear"
+        set(value){field=value;canvas.invalidate()}
+    private val mesh=mutableListOf<PointF>()
+    private var meshBefore=listOf<PointF>()
+    private var snapX:Float?=null;private var snapY:Float?=null
     private var handle=-1
     private var pairCenter=PointF();private var pairDistance=0f;private var pairAngle=0f;private var accumulatedAngle=0f
     private val p=Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
     val ready get()=snapshot!=null && !committing
     val displaying get()=snapshot!=null
-    val bounds get()=snapshot?.bounds?.let{r->RectF().also{matrix.mapRect(it,r)}}
+    val bounds get()=snapshot?.let{val q=mappedMesh();RectF(q.minOf{it.x},q.minOf{it.y},q.maxOf{it.x},q.maxOf{it.y})}
+    private fun regularMesh():List<PointF>{val r=snapshot?.bounds?:return emptyList();return (0..3).flatMap{y->(0..3).map{x->PointF(r.left+r.width()*x/3,r.top+r.height()*y/3)}}}
+    private fun resetMesh(){mesh.clear();mesh.addAll(regularMesh())}
+    private fun meshChanged()=mesh.zip(regularMesh()).any{(a,b)->hypot(a.x-b.x,a.y-b.y)>.001f}
+    private fun mappedMesh():List<PointF>{if(mesh.isEmpty())return emptyList();val values=FloatArray(mesh.size*2);mesh.forEachIndexed{i,p->values[i*2]=p.x;values[i*2+1]=p.y};matrix.mapPoints(values);return mesh.indices.map{PointF(values[it*2],values[it*2+1])}}
     internal fun currentMatrix()=Matrix(matrix)
     fun ensure(){
         if(session.tool!="Transform" || loading || snapshot!=null || committing)return
@@ -53,7 +64,7 @@ internal class RasterTransform(private val canvas:PaintCanvas,private val sessio
             if(token!=generation || session.tool!="Transform"){value?.recycle();return@transformSnapshot}
             loading=false
             if(value==null || value.bounds.isEmpty){session.transformEditing=false;value?.recycle();canvas.onGesture("The active layer has no selected pixels to move");return@transformSnapshot}
-            snapshot=value;matrix.reset();canvas.invalidate()
+            snapshot=value;matrix.reset();resetMesh();canvas.invalidate()
         }
     }
     fun finish(cancel:Boolean=false){
@@ -62,18 +73,30 @@ internal class RasterTransform(private val canvas:PaintCanvas,private val sessio
         if(loading){generation++;loading=false}
         session.transformInteracting=false;session.transformEditing=false;gesture="";pointerA=-1;pointerB=-1
         if(s==null)return
-        if(cancel || matrix.isIdentity){dispose();canvas.invalidate();return}
+        if(cancel || (matrix.isIdentity && !meshChanged())){dispose();canvas.invalidate();return}
         val values=FloatArray(9);matrix.getValues(values)
         committing=true
-        session.command("transformMatrix",JSONObject().put("matrix",JSONArray(listOf(values[0],values[3],values[1],values[4],values[2],values[5]).map{it.toDouble()}))){result->
-            if(result.has("error")){dispose();canvas.invalidate()}else awaitingFrame=true
-        }
+        val operation:String;val payload=JSONObject().put("filter",interpolation)
+        if(meshChanged()){
+            operation="transformMesh";payload.put("columns",3).put("rows",3).put("points",JSONArray().also{array->mappedMesh().forEach{array.put(JSONArray().put(it.x).put(it.y))}})
+        }else{operation="transformProjective";payload.put("matrix",JSONArray(values.map{it.toDouble()}))}
+        session.command(operation,payload){result->if(result.has("error")){dispose();canvas.invalidate()}else awaitingFrame=true}
     }
+
     fun onFrame(){if(awaitingFrame){dispose();canvas.deselect();canvas.invalidate();if(session.tool=="Transform")ensure()}}
-    fun dispose(){session.transformEditing=false;session.transformInteracting=false;generation++;snapshot?.recycle();snapshot=null;loading=false;committing=false;awaitingFrame=false;matrix.reset()}
+    fun dispose(){session.transformEditing=false;session.transformInteracting=false;generation++;snapshot?.recycle();snapshot=null;loading=false;committing=false;awaitingFrame=false;matrix.reset();mesh.clear();snapX=null;snapY=null}
     private fun layerSource(c:Canvas,index:Int,s:TransformSnapshot){
         val plane=s.planes[index];plane.image?.let{c.drawBitmap(it,null,plane.rect,p)}
-        if(index==s.active){val moving=s.planes.last();moving.image?.let{val save=c.save();c.concat(matrix);c.drawBitmap(it,null,moving.rect,p);c.restoreToCount(save)}}
+        if(index==s.active){val moving=s.planes.last();moving.image?.let{
+            p.isFilterBitmap=interpolation!="Nearest"
+            if(meshChanged()){
+                val grid=mappedMesh();val steps=24;val vertices=FloatArray((steps+1)*(steps+1)*2)
+                for(y in 0..steps)for(x in 0..steps){val col=(x/8).coerceAtMost(2);val row=(y/8).coerceAtMost(2);val u=(x-col*8)/8f;val v=(y-row*8)/8f;val a=grid[row*4+col];val b=grid[row*4+col+1];val c0=grid[(row+1)*4+col+1];val d=grid[(row+1)*4+col];val at=(y*(steps+1)+x)*2
+                    vertices[at]=(1-u)*(1-v)*a.x+u*(1-v)*b.x+u*v*c0.x+(1-u)*v*d.x;vertices[at+1]=(1-u)*(1-v)*a.y+u*(1-v)*b.y+u*v*c0.y+(1-u)*v*d.y}
+                c.drawBitmapMesh(it,steps,steps,vertices,0,null,0,p)
+            }
+            else{val save=c.save();c.concat(matrix);c.drawBitmap(it,null,moving.rect,p);c.restoreToCount(save)}
+        }}
     }
     private fun blend(name:String,opacity:Float):Paint=Paint().apply{
         alpha=(opacity*255).roundToInt().coerceIn(0,255)
@@ -108,15 +131,38 @@ internal class RasterTransform(private val canvas:PaintCanvas,private val sessio
         return PointF(q[2]+(q[2]-q[0])/length*extra,q[3]+(q[3]-q[1])/length*extra)
     }
     fun drawHandles(c:Canvas){
-        if(snapshot==null)return;val q=mapped();val d=canvas.resources.displayMetrics.density/canvas.transformZoom
+        if(snapshot==null)return;val q=if(mode=="Warp")mappedMesh() else mapped();val d=canvas.resources.displayMetrics.density/canvas.transformZoom
         p.color=StudioColors.accent;p.style=Paint.Style.STROKE;p.strokeWidth=1.3f*d;p.pathEffect=DashPathEffect(floatArrayOf(6*d,4*d),0f)
-        c.drawPath(Path().apply{moveTo(q[0].x,q[0].y);for(i in 1..3)lineTo(q[i].x,q[i].y);close()},p);p.pathEffect=null
-        val rotate=rotationHandle();c.drawLine(q[4].x,q[4].y,rotate.x,rotate.y,p)
+        if(mode=="Warp"){
+            for(row in 0..3)c.drawPath(Path().apply{moveTo(q[row*4].x,q[row*4].y);for(col in 1..3)lineTo(q[row*4+col].x,q[row*4+col].y)},p)
+            for(col in 0..3)c.drawPath(Path().apply{moveTo(q[col].x,q[col].y);for(row in 1..3)lineTo(q[row*4+col].x,q[row*4+col].y)},p)
+        }else c.drawPath(Path().apply{moveTo(q[0].x,q[0].y);for(i in 1..3)lineTo(q[i].x,q[i].y);close()},p)
+        p.pathEffect=null
+        snapX?.let{c.drawLine(it,0f,it,session.canvasHeight.toFloat(),p)};snapY?.let{c.drawLine(0f,it,session.canvasWidth.toFloat(),it,p)}
+        val rotate=rotationHandle();c.drawLine(mapped()[4].x,mapped()[4].y,rotate.x,rotate.y,p)
         for(v in q+rotate){p.style=Paint.Style.FILL;p.color=Color.WHITE;c.drawCircle(v.x,v.y,5*d,p);p.style=Paint.Style.STROKE;p.color=StudioColors.accent;c.drawCircle(v.x,v.y,5*d,p)}
         p.style=Paint.Style.FILL
     }
-    private fun valid(candidate:Matrix):Boolean{val m=FloatArray(9);candidate.getValues(m);return m.all{it.isFinite() && abs(it)<=1_000_000} && abs(m[0]*m[4]-m[1]*m[3])>1e-6}
+    private fun valid(candidate:Matrix):Boolean{val m=FloatArray(9);candidate.getValues(m);return m.all{it.isFinite() && abs(it)<=1_000_000} && abs(m[0]*(m[4]*m[8]-m[5]*m[7])-m[1]*(m[3]*m[8]-m[5]*m[6])+m[2]*(m[3]*m[7]-m[4]*m[6]))>1e-6}
     private fun replace(candidate:Matrix){if(valid(candidate)){matrix.set(candidate);canvas.invalidate()}}
+    fun reset(){ensure();if(snapshot!=null){matrix.reset();resetMesh();snapX=null;snapY=null;canvas.invalidate();canvas.onChanged()}}
+    fun fitToCanvas(){ensure();val r=bounds?:return;val scale=min(session.canvasWidth/r.width(),session.canvasHeight/r.height());replace(Matrix(matrix).apply{postScale(scale,scale,r.centerX(),r.centerY());postTranslate(session.canvasWidth/2f-r.centerX(),session.canvasHeight/2f-r.centerY())});canvas.onChanged()}
+    private fun snapMove(dx:Float,dy:Float):PointF{
+        snapX=null;snapY=null;if(!snapping)return PointF(dx,dy)
+        val r=snapshot!!.bounds;val before=RectF();initial.mapRect(before,r)
+        val xs=mutableListOf(0f,session.canvasWidth/2f,session.canvasWidth.toFloat());val ys=mutableListOf(0f,session.canvasHeight/2f,session.canvasHeight.toFloat())
+        snapshot!!.planes.dropLast(1).forEachIndexed{i,p->if(i!=snapshot!!.active && !p.rect.isEmpty){xs.addAll(listOf(p.rect.left,p.rect.centerX(),p.rect.right));ys.addAll(listOf(p.rect.top,p.rect.centerY(),p.rect.bottom))}}
+        val threshold=8*canvas.resources.displayMetrics.density/canvas.transformZoom
+        val x=xs.flatMap{target->listOf(before.left,before.centerX(),before.right).map{edge->Pair(target,target-edge-dx)}}.minByOrNull{abs(it.second)}
+        val y=ys.flatMap{target->listOf(before.top,before.centerY(),before.bottom).map{edge->Pair(target,target-edge-dy)}}.minByOrNull{abs(it.second)}
+        if(x!=null && abs(x.second)<threshold)snapX=x.first;if(y!=null && abs(y.second)<threshold)snapY=y.first
+        return PointF(dx+if(snapX!=null)x!!.second else 0f,dy+if(snapY!=null)y!!.second else 0f)
+    }
+    private fun convex(points:List<PointF>):Boolean{
+        var sign=0f
+        for(i in points.indices){val a=points[i];val b=points[(i+1)%points.size];val c=points[(i+2)%points.size];val cross=(b.x-a.x)*(c.y-b.y)-(b.y-a.y)*(c.x-b.x);if(abs(cross)<.0001f)return false;if(sign!=0f && sign*cross<0)return false;sign=cross};return true
+    }
+    private fun validMesh(points:List<PointF>)=(0..2).all{row->(0..2).all{col->val i=row*4+col;convex(listOf(points[i],points[i+1],points[i+5],points[i+4]))}}
     fun scale(factor:Float){ensure();val s=snapshot?:return;val r=RectF();matrix.mapRect(r,s.bounds);replace(Matrix(matrix).apply{postScale(factor,factor,r.centerX(),r.centerY())});canvas.onChanged()}
     fun operation(key:String,value:Float){ensure();val s=snapshot?:return;val r=RectF();matrix.mapRect(r,s.bounds)
         replace(Matrix(matrix).apply{when(key){"sx"->postScale(value,1f,r.centerX(),r.centerY());"sy"->postScale(1f,value,r.centerX(),r.centerY());"angle"->postRotate(value*180f/Math.PI.toFloat(),r.centerX(),r.centerY())}});canvas.onChanged()
@@ -129,11 +175,11 @@ internal class RasterTransform(private val canvas:PaintCanvas,private val sessio
     fun touch(e:MotionEvent):Boolean{
         if(!ready){ensure();if(e.actionMasked==MotionEvent.ACTION_DOWN)canvas.onGesture(if(committing)"Applying transform…"else"Preparing transform…");return true}
         when(e.actionMasked){
-            MotionEvent.ACTION_DOWN->{canvas.onStrokeStart();session.transformInteracting=true;pen=e.getToolType(0) in listOf(MotionEvent.TOOL_TYPE_STYLUS,MotionEvent.TOOL_TYPE_ERASER);pointerA=e.getPointerId(0);pointerB=-1;origin=canvas.transformDocumentPoint(e.x,e.y);initial=Matrix(matrix);gestureBefore=Matrix(matrix)
-                val radius=22*canvas.resources.displayMetrics.density/canvas.transformZoom;val q=mapped();handle=q.indices.minByOrNull{hypot(q[it].x-origin.x,q[it].y-origin.y)}?.takeIf{hypot(q[it].x-origin.x,q[it].y-origin.y)<=radius}?:-1
-                val rotate=rotationHandle();gesture=if(handle>=0)"resize"else if(hypot(rotate.x-origin.x,rotate.y-origin.y)<=radius)"rotate"else"move"
+            MotionEvent.ACTION_DOWN->{canvas.onStrokeStart();session.transformInteracting=true;pen=e.getToolType(0) in listOf(MotionEvent.TOOL_TYPE_STYLUS,MotionEvent.TOOL_TYPE_ERASER);pointerA=e.getPointerId(0);pointerB=-1;origin=canvas.transformDocumentPoint(e.x,e.y);initial=Matrix(matrix);gestureBefore=Matrix(matrix);meshBefore=mesh.map{PointF(it.x,it.y)}
+                val radius=22*canvas.resources.displayMetrics.density/canvas.transformZoom;val q=if(mode=="Warp")mappedMesh()else mapped();handle=q.indices.minByOrNull{hypot(q[it].x-origin.x,q[it].y-origin.y)}?.takeIf{hypot(q[it].x-origin.x,q[it].y-origin.y)<=radius}?:-1
+                val rotate=rotationHandle();gesture=if(handle>=0 && mode=="Warp")"warp"else if(handle>=0)"resize"else if(hypot(rotate.x-origin.x,rotate.y-origin.y)<=radius)"rotate"else"move"
                 val r=snapshot!!.bounds;anchor=PointF(r.centerX(),r.centerY())
-                if(handle>=0){val ps=points();corner=ps[handle];anchor=ps[if(handle<4)(handle+2)%4 else 4+(handle-4+2)%4];val inverse=Matrix();initial.invert(inverse);val xy=floatArrayOf(origin.x,origin.y);inverse.mapPoints(xy);localOrigin=PointF(xy[0],xy[1])}
+                if(handle>=0 && gesture!="warp"){val ps=points();corner=ps[handle];anchor=ps[if(handle<4)(handle+2)%4 else 4+(handle-4+2)%4];val inverse=Matrix();initial.invert(inverse);val xy=floatArrayOf(origin.x,origin.y);inverse.mapPoints(xy);localOrigin=PointF(xy[0],xy[1])}
                 else if(gesture=="rotate"){val xy=floatArrayOf(anchor.x,anchor.y);initial.mapPoints(xy);anchor=PointF(xy[0],xy[1])}
             }
             MotionEvent.ACTION_POINTER_DOWN->if(!pen && pointerB<0)startPair(e)
@@ -146,13 +192,24 @@ internal class RasterTransform(private val canvas:PaintCanvas,private val sessio
                         val change=Matrix().apply{setScale(scale,scale,pairCenter.x,pairCenter.y);postRotate(accumulatedAngle*180f/Math.PI.toFloat(),pairCenter.x,pairCenter.y);postTranslate(center.x-pairCenter.x,center.y-pairCenter.y)}
                         replace(Matrix(initial).apply{postConcat(change)})
                     }
-                    "move"->replace(Matrix(initial).apply{postTranslate(at.x-origin.x,at.y-origin.y)})
-                    "rotate"->{val angle=(atan2(at.y-anchor.y,at.x-anchor.x)-atan2(origin.y-anchor.y,origin.x-anchor.x))*180f/Math.PI.toFloat();replace(Matrix(initial).apply{postRotate(angle,anchor.x,anchor.y)})}
-                    "resize"->{val inverse=Matrix();initial.invert(inverse);val xy=floatArrayOf(at.x,at.y);inverse.mapPoints(xy);val x=corner.x+xy[0]-localOrigin.x;val y=corner.y+xy[1]-localOrigin.y
+                    "move"->{val offset=snapMove(at.x-origin.x,at.y-origin.y);replace(Matrix(initial).apply{postTranslate(offset.x,offset.y)})}
+                    "rotate"->{var angle=(atan2(at.y-anchor.y,at.x-anchor.x)-atan2(origin.y-anchor.y,origin.x-anchor.x))*180f/Math.PI.toFloat();if(snapping && abs(angle/15f-round(angle/15f))<.2f)angle=round(angle/15f)*15f;replace(Matrix(initial).apply{postRotate(angle,anchor.x,anchor.y)})}
+                    "warp"->{val inverse=Matrix();initial.invert(inverse);val xy=floatArrayOf(at.x,at.y,origin.x,origin.y);inverse.mapPoints(xy);val candidate=meshBefore.map{PointF(it.x,it.y)}.toMutableList();candidate[handle].offset(xy[0]-xy[2],xy[1]-xy[3]);if(validMesh(candidate)){mesh.clear();mesh.addAll(candidate);canvas.invalidate()}}
+                    "resize"->{
+                        if(mode=="Distort"){
+                            val source=points().take(4);val target=source.map{v->val p=floatArrayOf(v.x,v.y);initial.mapPoints(p);PointF(p[0],p[1])}.toMutableList()
+                            val affected=if(handle<4)listOf(handle)else when(handle){4->listOf(0,1);5->listOf(1,2);6->listOf(2,3);else->listOf(3,0)}
+                            affected.forEach{target[it].offset(at.x-origin.x,at.y-origin.y)}
+                            if(convex(target)){val src=source.flatMap{listOf(it.x,it.y)}.toFloatArray();val dst=target.flatMap{listOf(it.x,it.y)}.toFloatArray();val candidate=Matrix();if(candidate.setPolyToPoly(src,0,dst,0,4))replace(candidate)}
+                            return true
+                        }
+                        val inverse=Matrix();initial.invert(inverse);val xy=floatArrayOf(at.x,at.y);inverse.mapPoints(xy);val x=corner.x+xy[0]-localOrigin.x;val y=corner.y+xy[1]-localOrigin.y
                         var sx=1f;var sy=1f
-                        if(handle<4){val dx=corner.x-anchor.x;val dy=corner.y-anchor.y;val v=(((x-anchor.x)*dx+(y-anchor.y)*dy)/(dx*dx+dy*dy).coerceAtLeast(.001f)).coerceIn(.02f,50f);sx=v;sy=v}
+                        if(handle<4){val dx=corner.x-anchor.x;val dy=corner.y-anchor.y
+                            if(mode=="Freeform"){sx=((x-anchor.x)/dx).coerceIn(.02f,50f);sy=((y-anchor.y)/dy).coerceIn(.02f,50f)}else{val v=(((x-anchor.x)*dx+(y-anchor.y)*dy)/(dx*dx+dy*dy).coerceAtLeast(.001f)).coerceIn(.02f,50f);sx=v;sy=v}}
                         else if(handle==5 || handle==7)sx=((x-anchor.x)/(corner.x-anchor.x)).coerceIn(.02f,50f)
                         else sy=((y-anchor.y)/(corner.y-anchor.y)).coerceIn(.02f,50f)
+                        if(mode=="Uniform"){if(handle==5 || handle==7)sy=sx else if(handle>=4)sx=sy}
                         replace(Matrix(initial).apply{preScale(sx,sy,anchor.x,anchor.y)})
                     }
                 }
@@ -162,8 +219,8 @@ internal class RasterTransform(private val canvas:PaintCanvas,private val sessio
                 val remaining=(0 until e.pointerCount).filter{it!=e.actionIndex}
                 if(remaining.size>=2)startPair(e,e.actionIndex)else if(remaining.size==1){val i=remaining[0];pointerA=e.getPointerId(i);pointerB=-1;origin=canvas.transformDocumentPoint(e.getX(i),e.getY(i));initial=Matrix(matrix);gesture="move"}
             }
-            MotionEvent.ACTION_UP->{val last=MotionEvent.obtain(e);last.action=MotionEvent.ACTION_MOVE;touch(last);last.recycle();session.transformInteracting=false;gesture="";pointerA=-1;pointerB=-1;canvas.onChanged();canvas.performClick()}
-            MotionEvent.ACTION_CANCEL->{replace(gestureBefore);session.transformInteracting=false;gesture="";pointerA=-1;pointerB=-1;canvas.onChanged()}
+            MotionEvent.ACTION_UP->{val last=MotionEvent.obtain(e);last.action=MotionEvent.ACTION_MOVE;touch(last);last.recycle();session.transformInteracting=false;gesture="";pointerA=-1;pointerB=-1;snapX=null;snapY=null;canvas.onChanged();canvas.performClick()}
+            MotionEvent.ACTION_CANCEL->{mesh.clear();mesh.addAll(meshBefore);replace(gestureBefore);session.transformInteracting=false;gesture="";pointerA=-1;pointerB=-1;canvas.onChanged()}
         };return true
     }
 }

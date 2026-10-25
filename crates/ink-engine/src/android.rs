@@ -5,6 +5,8 @@ use std::sync::{Mutex,OnceLock};
 use std::sync::atomic::{AtomicI64,Ordering};
 
 static ENGINES:OnceLock<Mutex<HashMap<i64,Engine>>>=OnceLock::new();
+static CLIPBOARD:OnceLock<Mutex<Option<selection::Clipboard>>>=OnceLock::new();
+fn clipboard()->&'static Mutex<Option<selection::Clipboard>>{CLIPBOARD.get_or_init(||Mutex::new(None))}
 static NEXT:AtomicI64=AtomicI64::new(1);
 fn engines()->&'static Mutex<HashMap<i64,Engine>> {ENGINES.get_or_init(||Mutex::new(HashMap::new()))}
 fn output(env:&JNIEnv,value:Value)->jstring {env.new_string(value.to_string()).map(|s|s.into_raw()).unwrap_or(std::ptr::null_mut())}
@@ -23,20 +25,27 @@ pub extern "system" fn Java_art_inkstone_NativeBridge_command(mut env:JNIEnv,_th
     let text:String=match env.get_string(&input) {Ok(s)=>s.into(),Err(_)=>return output(&env,error("Invalid command"))};
     let result=match serde_json::from_str::<Value>(&text) {
         Ok(v)=> match engines().lock().unwrap().get_mut(&id) {
-            Some(e)=>e.command(&v).unwrap_or_else(error),None=>error("Drawing engine is closed")
+            Some(e)=>{
+                let op=v["op"].as_str().unwrap_or("");
+                if op=="selectionPaste"{if let Some(copy)=clipboard().lock().unwrap().clone(){e.clipboard=Some(copy);}}
+                let result=e.command(&v);
+                if result.is_ok() && matches!(op,"selectionCopy"|"selectionCut"|"selectionCopyPaste"){*clipboard().lock().unwrap()=e.clipboard.clone();}
+                result.unwrap_or_else(error)
+            },None=>error("Drawing engine is closed")
         },Err(_)=>error("Invalid command JSON")
     };
     output(&env,result)
 }
 #[no_mangle]
 pub extern "system" fn Java_art_inkstone_NativeBridge_stroke(env:JNIEnv,_this:JObject,id:jlong,phase:jint,input:JFloatArray,
-    kind:jint,color:jint,size:jfloat,opacity:jfloat,flow:jfloat,stabilization:jfloat,pressure_size:jfloat,pressure_opacity:jfloat) {
+    kind:jint,color:jint,size:jfloat,opacity:jfloat,flow:jfloat,stabilization:jfloat,pressure_size:jfloat,pressure_opacity:jfloat,fade_length:jfloat) {
     let len=env.get_array_length(&input).unwrap_or(0) as usize;
     if len>65536 || len%4!=0 {return;}
     let mut values=vec![0f32;len];if env.get_float_array_region(&input,0,&mut values).is_err(){return;}
     let mut guard=engines().lock().unwrap();let Some(e)=guard.get_mut(&id) else{return;};
     if phase==3 {e.cancel();return;}
-    let brush=Brush {kind:kind as u8,color:color as u32,size,opacity,flow,stabilization,pressure_size,pressure_opacity};
+    let brush=Brush {kind:kind as u8,color:color as u32,size,opacity,flow,stabilization,pressure_size,pressure_opacity,fade_length};
+    if phase!=0 && !values.is_empty(){e.update_brush(brush);}
     for (i,p) in values.chunks_exact(4).enumerate() {
         let sample=Sample{x:p[0],y:p[1],pressure:p[2],tilt:p[3]};
         if phase==0 && i==0 {e.begin(sample,brush);} else {e.sample(sample);}

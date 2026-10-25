@@ -1,4 +1,30 @@
-# Verification — 24 October 2026
+# Verification — 26 October 2026
+
+## 0.1.9-preview3 — PR #1 integration and release candidate
+
+- Integrated contribution `f19aa0903aed00e6a84bc3e4e86d42cd712f73cc` by andikasujanadi into the preview2 working tree, with local compatibility fixes. Prepared for publication on 26 October 2026; Recent, Fade, category scrolling and missing layer folders are explicitly recorded in KNOWN_ISSUES.md.
+- 79 Android-framework tests passed against the existing preview2 host JNI engine. Seven new integration tests cover full independent Paint/Smudge/Eraser profile persistence including Fade; preset-default migration; shortcut toggling and repeat rejection; Vector dialog key recording/reset/dismissal; left/right panel navigation; fit-animation interruption; and quick pinch with enabled/disabled/locked states. The stabilizer regression now follows the new return-to-Preferences flow.
+- Android lint: zero errors, 95 warnings. Build succeeded. APK v2 signature matches the existing preview certificate. Package `art.inkstone.preview`, version code 21, version name `0.1.9-preview3`. Both ABI libraries match the already validated preview2 native outputs; fourteen JNI entry points, 16 KB ELF alignment. Bundled license notices match current sources, including contribution credit.
+- APK: `releases/inkstone-0.1.9-preview3-debug.apk`, 10,184,161 bytes. SHA-256: `2d60f9b7bebec6b6b1303b1ccc591fd6f23792066bf2d185f2c9f787db5b8489`.
+- Rust/native code is unchanged by this integration; preview2's 59 standard Rust and eight physical Metal GPU results below were not rerun. Physical Android stylus, keyboard and Vulkan testing remains pending. Instructions: [LOCAL_PREVIEW_019_3.md](LOCAL_PREVIEW_019_3.md).
+
+## Unpublished local 0.1.9-preview2
+
+- 72 Android-framework tests passed against the rebuilt host JNI library. New checks cover the six-group compact selection toolbar, one expanded group at a time, portrait scrolling, combined/feathered/saved selections, Automatic selection, clipboard paste across documents, Freeform/Uniform/Distort/Warp, snapping, reset/fit, interpolation, preview/commit parity, cancellation and Undo/Redo.
+- 59 standard Rust tests and eight physical Metal GPU tests passed. Fade now keeps its width and supports arbitrary stroke length, with tail opacity applied at pen lift. Coverage includes tap/short strokes, input-batch independence, mid-stroke eraser settings, Undo/Redo, CPU/GPU parity and removal of stale live-tail pixels.
+- Independent SVG, layered PSD and masked PSD fixture validation passed. Compact collapsed/expanded toolbar, feathered selection and live/committed warp screenshots were visually inspected.
+- Android lint: zero errors, 93 warnings. APK v2 signature matches the existing preview certificate. Package `art.inkstone.preview`, version code 20, version name `0.1.9-preview2`. Both ARM64/x86-64 native libraries match rebuilt outputs, expose fourteen JNI entry points and use 16 KB ELF load alignment. Bundled license notices match source files.
+- APK: `releases/inkstone-0.1.9-preview2-debug.apk`, 10,167,657 bytes. SHA-256: `8d308db5fe348c418f575fea4f53bdff0725d4b502a636c3ccca75ece7629778`.
+- No commit, push, tag or GitHub release. Physical Xiaomi/Samsung stylus and Android Vulkan testing remains pending. Details: [LOCAL_PREVIEW_019_2.md](LOCAL_PREVIEW_019_2.md).
+
+## Unpublished local 0.1.9-preview1
+
+- 67 Android-framework tests passed against the rebuilt real host JNI library, including seven new regression tests. They exercise live Vector wheel/hex/preview/toolbar color and drag-fill with Undo/Redo; mid-stroke S Pen-style erasing with separate wide eraser settings and one Undo; once-per-press key mappings and persistence; legacy and modern button bits; mouse exclusion; the function chooser and direct Eyedropper; native fade/reset; and removal of the redundant finger setting with migration of old false values.
+- 54 standard Rust tests passed. Seven physical Metal GPU tests passed, including a new fade/profile-switch comparison with CPU output (maximum channel difference bounded at three). Native fade tests cover input-batch independence, taper/cutoff, per-stroke reset, cancel, Undo/Redo, and mid-stroke eraser profile changes.
+- Independent SVG, layered PSD, and masked PSD fixture validation passed. Framework screenshots of faded strokes, the stylus settings and a Vector shape filled with the live hex color were visually inspected.
+- Android lint: zero errors, 89 warnings. APK build and v2 signing verified against the existing preview certificate. Package `art.inkstone.preview`, version code 19, version name `0.1.9-preview1`. ARM64/x86-64, fourteen JNI methods per ABI, 16 KB ELF alignment; packaged native binaries match the rebuilt outputs.
+- APK: `releases/inkstone-0.1.9-preview1-debug.apk`, 10,007,545 bytes. SHA-256: `4d5295dd383a83af2007545783983e1f70fd2afe46f839191c147e8ef5e2add0`. Packaged source-available/artwork-use notices match the current license files and sole-author copyright notice.
+- No commit, push, tag or GitHub release for these local changes. Physical Samsung S Pen and Xiaomi stylus/Vulkan behavior still need device testing. Details: [LOCAL_PREVIEW_019.md](LOCAL_PREVIEW_019.md).
 
 ## 0.1.8 release checks
 

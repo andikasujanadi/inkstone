@@ -7,7 +7,7 @@ Start with a new artwork; export an `.inkstone` copy before uninstalling a previ
 1. Install the APK and open the default canvas.
 2. Draw strokes from light to firm pressure with Studio Pen and Graphite. Check the pressure range in Actions → Prefs → Stylus diagnostics. Record the pen's exact model and HyperOS version.
 3. Test tilted pencil marks, hover cursor, and the side button. Record which events Android actually exposes; manufacturer specifications alone are not runtime evidence.
-4. Rest a palm on the screen while drawing. Toggle Paint with finger off. Verify that canceled strokes leave no marks and that finger navigation remains usable.
+4. Rest a palm on the screen while drawing. Enable Pen-only input. Verify that canceled strokes leave no marks and that finger navigation remains usable.
 5. Pan, rotate, and zoom with two fingers. Try two-finger undo and three-finger redo without adding stray marks.
 6. Add several layers, hide/reorder them, change opacity, try alpha lock and clipping masks, then undo and redo the edits.
 7. Select an area and paint/fill/adjust/translate it. Confirm other pixels remain intact.

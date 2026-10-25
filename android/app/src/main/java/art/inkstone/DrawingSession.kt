@@ -11,10 +11,11 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
 data class BrushPreset(val name: String, val group: String, val kind: Int, val size: Float,
-    val flow: Float = 1f, val pressureSize: Float = .8f, val pressureOpacity: Float = 0f)
+    val flow: Float = 1f, val pressureSize: Float = .8f, val pressureOpacity: Float = 0f, val fadeLength:Float=0f)
 
 val brushPresets = listOf(
     BrushPreset("Studio Pen", "Inking", 0, 12f),
+    BrushPreset("Fade Brush", "Inking", 0, 28f, pressureSize=0f,fadeLength=150f),
     BrushPreset("Technical Pen", "Inking", 0, 4f, pressureSize = .35f),
     BrushPreset("Dry Ink", "Inking", 3, 18f, .9f),
     BrushPreset("Graphite", "Sketching", 1, 9f, .8f, .7f, .7f),
@@ -84,7 +85,7 @@ class DrawingSession(width: Int, height: Int) : Closeable {
     internal var onToolChange:()->Unit={}
     private val dropGeneration=AtomicLong(0)
     private val inputLock=Any()
-    private data class StrokeSettings(val kind:Int,val color:Int,val size:Float,val opacity:Float,val flow:Float,val smooth:Float,val pressureSize:Float,val pressureOpacity:Float)
+    private data class StrokeSettings(val kind:Int,val color:Int,val size:Float,val opacity:Float,val flow:Float,val smooth:Float,val pressureSize:Float,val pressureOpacity:Float,val fadeLength:Float)
     private class MoveBatch(val settings:StrokeSettings,val chunks:MutableList<FloatArray>,var size:Int)
     private var pendingMoves:MoveBatch?=null
     private val main = Handler(Looper.getMainLooper())
@@ -104,13 +105,18 @@ class DrawingSession(width: Int, height: Int) : Closeable {
     val canvasWidth get() = info.getInt("width")
     val canvasHeight get() = info.getInt("height")
 
-    private class ToolBrush(var preset:BrushPreset){
+    class ToolBrush(var preset:BrushPreset){
         var size=preset.size;var opacity=1f;var flow=preset.flow
-        var pressureSize=preset.pressureSize;var pressureOpacity=preset.pressureOpacity
+        var pressureSize=preset.pressureSize;var pressureOpacity=preset.pressureOpacity;var fadeLength=preset.fadeLength
     }
-    private val paintBrush=ToolBrush(brushPresets[0])
-    private val eraseBrush=ToolBrush(brushPresets[0])
-    private val currentBrush get()=if(tool=="Erase")eraseBrush else paintBrush
+    val paintBrush=ToolBrush(brushPresets[0])
+    val smudgeBrush=ToolBrush(brushPresets.find { it.name == "Medium Blend" } ?: brushPresets[0])
+    val eraseBrush=ToolBrush(brushPresets[0])
+    val currentBrush get()=when(tool) {
+        "Erase" -> eraseBrush
+        "Smudge" -> smudgeBrush
+        else -> paintBrush
+    }
     var preset:BrushPreset
         get()=currentBrush.preset
         set(value){currentBrush.preset=value}
@@ -123,6 +129,10 @@ class DrawingSession(width: Int, height: Int) : Closeable {
     var flow:Float
         get()=currentBrush.flow
         set(value){currentBrush.flow=value}
+    var fadeLength:Float
+        get()=currentBrush.fadeLength
+        set(value){currentBrush.fadeLength=value.coerceIn(0f,2000f)}
+    internal fun cursorSize(eraser:Boolean)=if(eraser)eraseBrush.size else currentBrush.size
     var stabilization = .12f
     var rendererMode="auto"; private set
     fun setRenderer(mode:String,then:()->Unit={}) {
@@ -144,7 +154,6 @@ class DrawingSession(width: Int, height: Int) : Closeable {
     var color = 0xff202020.toInt()
     var tool = "Paint"
         set(value){if(field==value)return;field=value;onToolChange()}
-    var fingerDrawing = true
     var guide = false
     var symmetryMode="Off";private set
     fun setSymmetry(mode:String){symmetryMode=mode;command("symmetry",JSONObject().put("mode",mode))}
@@ -155,7 +164,11 @@ class DrawingSession(width: Int, height: Int) : Closeable {
     var threeFingerRedo=true
     var fourFingerFullScreen=true
     var holdEyedropper=true
-    var penButtonErase=true
+    internal var stylusButtonAction=StylusAction.ERASE
+    var penButtonErase:Boolean
+        get()=stylusButtonAction==StylusAction.ERASE
+        set(value){stylusButtonAction=if(value)StylusAction.ERASE else StylusAction.NONE}
+    var pinchToFit=true
     var rightSidebar = false
     var lightInterface = false
     var dynamicBrushScaling=true
@@ -164,7 +177,7 @@ class DrawingSession(width: Int, height: Int) : Closeable {
     var selectionVisibility=.3f
 
     fun choose(p: BrushPreset) {
-        preset = p; size = p.size; flow = p.flow; pressureSize = p.pressureSize; pressureOpacity = p.pressureOpacity
+        preset = p; size = p.size; flow = p.flow; pressureSize = p.pressureSize; pressureOpacity = p.pressureOpacity;fadeLength=p.fadeLength
     }
 
     fun stroke(phase: Int, samples: FloatArray, eraser: Boolean = false) {
@@ -173,11 +186,11 @@ class DrawingSession(width: Int, height: Int) : Closeable {
         if(phase==0)penActive=true
         if(phase==2||phase==3)penActive=false
         val erasing=eraser||tool=="Erase"
-        val brush=if(erasing)eraseBrush else paintBrush
+        val brush=if(erasing)eraseBrush else if(tool=="Smudge")smudgeBrush else paintBrush
         val kind=if(erasing)64+brush.preset.kind else if(tool=="Smudge")128+brush.preset.kind else brush.preset.kind
         // Erasing uses alpha coverage; the unused color carries edge hardness to both renderers.
         val ink=if(erasing)(eraserHardness.coerceIn(0f,1f)*255+.5f).toInt() else color
-        val settings=StrokeSettings(kind,ink,if(dynamicBrushScaling)brush.size else brush.size/viewZoom.coerceAtLeast(.02f),brush.opacity,brush.flow,stabilization,if(pressureEnabled)brush.pressureSize else 0f,if(pressureEnabled)brush.pressureOpacity else 0f)
+        val settings=StrokeSettings(kind,ink,if(dynamicBrushScaling)brush.size else brush.size/viewZoom.coerceAtLeast(.02f),brush.opacity,brush.flow,stabilization,if(pressureEnabled)brush.pressureSize else 0f,if(pressureEnabled)brush.pressureOpacity else 0f,brush.fadeLength)
         synchronized(inputLock){
             if(phase==1){
                 val pending=pendingMoves
@@ -199,7 +212,7 @@ class DrawingSession(width: Int, height: Int) : Closeable {
         }
     }
     private fun sendStroke(phase:Int,samples:FloatArray,s:StrokeSettings){
-        NativeBridge.stroke(handle,phase,samples,s.kind,s.color,s.size,s.opacity,s.flow,s.smooth,s.pressureSize,s.pressureOpacity)
+        NativeBridge.stroke(handle,phase,samples,s.kind,s.color,s.size,s.opacity,s.flow,s.smooth,s.pressureSize,s.pressureOpacity,s.fadeLength)
     }
 
     private var pendingShape:Pair<StrokeSettings,FloatArray>?=null
@@ -207,7 +220,7 @@ class DrawingSession(width: Int, height: Int) : Closeable {
     internal fun previewQuickShape(samples:FloatArray){
         if(closed || samples.size<4)return
         penActive=true
-        val settings=StrokeSettings(preset.kind,color,if(dynamicBrushScaling)size else size/viewZoom.coerceAtLeast(.02f),opacity,flow,0f,if(pressureEnabled)pressureSize else 0f,if(pressureEnabled)pressureOpacity else 0f)
+        val settings=StrokeSettings(preset.kind,color,if(dynamicBrushScaling)size else size/viewZoom.coerceAtLeast(.02f),opacity,flow,0f,if(pressureEnabled)pressureSize else 0f,if(pressureEnabled)pressureOpacity else 0f,fadeLength)
         synchronized(inputLock){
             pendingMoves=null;pendingShape=settings to samples
             if(shapeQueued)return
@@ -260,6 +273,11 @@ class DrawingSession(width: Int, height: Int) : Closeable {
             changed()
             main.post { if (!closed) { onInfo(); then(result) } }
         }
+    }
+
+    internal fun selectionPreview(then:(JSONObject)->Unit){
+        if(closed)return
+        worker.execute{if(disposed)return@execute;val value=JSONObject(NativeBridge.command(handle,"{\"op\":\"selectionPreview\"}"));main.post{if(!closed)then(value)}}
     }
 
     private fun readInfo() {

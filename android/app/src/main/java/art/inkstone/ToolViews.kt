@@ -158,8 +158,8 @@ class BrushPreview(context:Context,val preset:BrushPreset,var chosen:Boolean=fal
         p.color=if(eraser)0xff273440.toInt() else 0xffedf3f4.toInt();p.style=Paint.Style.FILL
         p.maskFilter=if(preset.kind in listOf(2,8,9))BlurMaskFilter((if(preset.kind==2)12 else if(preset.kind==9)2 else 6)*d,BlurMaskFilter.Blur.NORMAL) else if(preset.kind==4)BlurMaskFilter(3*d,BlurMaskFilter.Blur.NORMAL) else null
         for(i in 0..140){val t=i/140f;val x=22*d+t*(w-44*d);val y=h*.72f-t*14*d+sin(t*2*Math.PI).toFloat()*2*d
-            val radius=if(preset.kind in listOf(0,1)&&preset.size<24) (1.3f+sin(t*Math.PI).toFloat()*1.6f)*d else (12+sin(t*Math.PI).toFloat()*4)*d
-            p.alpha=if(preset.kind==4)28 else 240;c.drawCircle(x,y,radius,p)
+            var radius=if(preset.kind in listOf(0,1)&&preset.size<24) (1.3f+sin(t*Math.PI).toFloat()*1.6f)*d else (12+sin(t*Math.PI).toFloat()*4)*d
+            p.alpha=((if(preset.kind==4)28 else 240)*if(preset.fadeLength>0)((1-t)/.35f).coerceIn(0f,1f) else 1f).roundToInt();c.drawCircle(x,y,radius,p)
             if(preset.kind in listOf(1,3,10,11,13,14)){p.alpha=130;for(j in 0..3)c.drawCircle(x+sin(i*3f+j)*3*d,y+cos(i*7f+j)*radius,max(.4f*d,radius*.12f),p)}
         };p.maskFilter=null;p.alpha=255
     }
@@ -176,6 +176,7 @@ class BrushPreview(context:Context,val preset:BrushPreset,var chosen:Boolean=fal
 class ColorDisc(context:Context,initial:Int,var classic:Boolean=false,val changed:(Int)->Unit):View(context){
     private val p=Paint(Paint.ANTI_ALIAS_FLAG)
     private val hsv=FloatArray(3).also{Color.colorToHSV(initial,it)}
+    fun setColor(color:Int){Color.colorToHSV(color,hsv);invalidate()}
     private var ring=false
     private var disc:Bitmap?=null
     private var cachedHue=-1f
