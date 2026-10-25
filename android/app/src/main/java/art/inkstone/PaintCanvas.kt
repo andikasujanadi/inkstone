@@ -1,5 +1,6 @@
 package art.inkstone
 
+import android.animation.ValueAnimator
 import android.content.Context
 import android.graphics.*
 import android.os.SystemClock
@@ -29,6 +30,15 @@ class PaintCanvas(context: Context, val session: DrawingSession) : View(context)
     private var gestureX = 0f; private var gestureY = 0f
     private var gestureDistance = 0f; private var gestureAngle = 0f
     private var gestureA = -1; private var gestureB = -1
+    private var gestureStartTime = 0L
+    private var gestureStartDistance = 0f
+    private var gestureLastDistance = 0f
+    private var gestureLastTime = 0L
+    private var gesturePinchVelocity = 0f
+    private var gestureMinDistance = 0f
+    private var gestureMaxDistance = 0f
+    private var gesturePinching = false
+    private var fitAnimator: ValueAnimator? = null
     private var hover: PointF? = null
     private val selectionPoints = mutableListOf<PointF>()
     private var selectionPath: Path? = null
@@ -84,6 +94,65 @@ class PaintCanvas(context: Context, val session: DrawingSession) : View(context)
         if (width == 0 || height == 0) return
         zoom = min((width - 100 * dp) / session.canvasWidth, (height - 70 * dp) / session.canvasHeight).coerceAtLeast(.02f)
         rotation = 0f; panX = 0f; panY = 0f; fitted = true; invalidate()
+    }
+    fun animateFit(onEnd: () -> Unit = {}) {
+        if (width == 0 || height == 0) return
+        fitAnimator?.cancel()
+        val targetZoom = min((width - 100 * dp) / session.canvasWidth, (height - 70 * dp) / session.canvasHeight).coerceAtLeast(.02f)
+        val startZoom = zoom
+        val startPanX = panX
+        val startPanY = panY
+        var currentRot = rotation % 360f
+        if (currentRot > 180f) currentRot -= 360f
+        if (currentRot < -180f) currentRot += 360f
+        val startRot = currentRot
+
+        val animator = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = 240
+            interpolator = android.view.animation.DecelerateInterpolator(1.5f)
+            addUpdateListener { va ->
+                val f = va.animatedFraction
+                zoom = startZoom + (targetZoom - startZoom) * f
+                panX = startPanX + (0f - startPanX) * f
+                panY = startPanY + (0f - startPanY) * f
+                rotation = startRot + (0f - startRot) * f
+                fitted = true
+                invalidate()
+            }
+            addListener(object : android.animation.AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: android.animation.Animator) {
+                    fit()
+                    fitAnimator = null
+                    onEnd()
+                }
+            })
+        }
+        fitAnimator = animator
+        animator.start()
+    }
+    fun resetRotation() {
+        if (rotation == 0f) return
+        fitAnimator?.cancel()
+        var currentRot = rotation % 360f
+        if (currentRot > 180f) currentRot -= 360f
+        if (currentRot < -180f) currentRot += 360f
+        val startRot = currentRot
+        val animator = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = 200
+            interpolator = android.view.animation.DecelerateInterpolator()
+            addUpdateListener { va ->
+                val f = va.animatedFraction
+                rotation = startRot * (1f - f)
+                invalidate()
+            }
+            addListener(object : android.animation.AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: android.animation.Animator) {
+                    rotation = 0f
+                    invalidate()
+                }
+            })
+        }
+        animator.start()
     }
     fun deselect() { selectionPath = null; selectionPoints.clear(); invalidate() }
     fun zoomBy(factor: Float) { zoom = (zoom * factor).coerceIn(.02f, 30f); invalidate() }
@@ -212,11 +281,20 @@ class PaintCanvas(context: Context, val session: DrawingSession) : View(context)
     }
     private fun startGesture(event: MotionEvent, exclude: Int = -1) {
         val indexes = (0 until event.pointerCount).filter { it != exclude }
-        if (indexes.size < 2) { gestureA = -1; gestureB = -1; return }
+        if (indexes.size < 2) { gestureA = -1; gestureB = -1; gesturePinching = false; return }
         val a = indexes[0]; val b = indexes[1]; gestureA = event.getPointerId(a); gestureB = event.getPointerId(b)
         gestureX = (event.getX(a) + event.getX(b)) * .5f; gestureY = (event.getY(a) + event.getY(b)) * .5f
         val dx = event.getX(b) - event.getX(a); val dy = event.getY(b) - event.getY(a)
         gestureDistance = hypot(dx, dy); gestureAngle = atan2(dy, dx)
+        val now = SystemClock.uptimeMillis()
+        gestureStartTime = now
+        gestureStartDistance = gestureDistance
+        gestureLastDistance = gestureDistance
+        gestureLastTime = now
+        gesturePinchVelocity = 0f
+        gestureMinDistance = gestureDistance
+        gestureMaxDistance = gestureDistance
+        gesturePinching = true
     }
     private fun moveGesture(event: MotionEvent) {
         if(session.canvasLocked){moved=true;return}
@@ -225,6 +303,14 @@ class PaintCanvas(context: Context, val session: DrawingSession) : View(context)
         val x = (event.getX(a) + event.getX(b)) * .5f; val y = (event.getY(a) + event.getY(b)) * .5f
         val dx = event.getX(b) - event.getX(a); val dy = event.getY(b) - event.getY(a)
         val distance = hypot(dx, dy); val angle = atan2(dy, dx)
+        val now = SystemClock.uptimeMillis()
+        val dt = (now - gestureLastTime).coerceAtLeast(1)
+        val contraction = (gestureLastDistance - distance) / dt.toFloat()
+        gesturePinchVelocity = gesturePinchVelocity * 0.35f + contraction * 0.65f
+        gestureLastDistance = distance
+        gestureLastTime = now
+        if (distance < gestureMinDistance) gestureMinDistance = distance
+        if (distance > gestureMaxDistance) gestureMaxDistance = distance
         if (hypot(x - gestureX, y - gestureY) > 2 * dp || abs(distance - gestureDistance) > 2 * dp || abs(angle - gestureAngle) > .015f) moved = true
         val anchor = documentPoint(gestureX, gestureY)
         if (gestureDistance > 10 * dp) zoom = (zoom * distance / gestureDistance).coerceIn(.02f, 30f)
@@ -234,6 +320,25 @@ class PaintCanvas(context: Context, val session: DrawingSession) : View(context)
         updateMatrix(); val mapped = floatArrayOf(anchor.x, anchor.y); transform.mapPoints(mapped)
         panX += x - mapped[0]; panY += y - mapped[1]
         gestureX = x; gestureY = y; gestureDistance = distance; gestureAngle = angle; invalidate()
+    }
+    private fun checkQuickPinch(): Boolean {
+        if (!gesturePinching || !session.pinchToFit || session.canvasLocked) {
+            gesturePinching = false
+            return false
+        }
+        val now = SystemClock.uptimeMillis()
+        val duration = now - gestureStartTime
+        val dist = gestureLastDistance
+        val ratio = if (gestureStartDistance > 0f) dist / gestureStartDistance else 1f
+        val fastPinch = gesturePinchVelocity > 0.30f * dp && ratio < 0.90f
+        val quickContraction = duration in 60..450 && ratio < 0.78f && gesturePinchVelocity > 0.08f * dp
+        gesturePinching = false
+        if (fastPinch || quickContraction) {
+            animateFit()
+            onGesture("Fit canvas")
+            return true
+        }
+        return false
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
@@ -246,6 +351,7 @@ class PaintCanvas(context: Context, val session: DrawingSession) : View(context)
         }
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                fitAnimator?.cancel(); fitAnimator = null
                 removeCallbacks(shapeHold);shapePoints.clear();snapped=false;shapeEligible=event.getToolType(0)!=MotionEvent.TOOL_TYPE_ERASER && !(session.penButtonErase && event.isButtonPressed(MotionEvent.BUTTON_STYLUS_PRIMARY));holdX=event.x;holdY=event.y
                 requestFocus()
                 if (onDismissPanel()) return true
@@ -290,13 +396,16 @@ class PaintCanvas(context: Context, val session: DrawingSession) : View(context)
                 if (pen && drawing && event.getPointerId(event.actionIndex) == activePointer) {
                     if(snapped)quickShapeEdit.release()else session.stroke(2,strokeSamples(event,event.actionIndex,false),event.getToolType(event.actionIndex)==MotionEvent.TOOL_TYPE_ERASER)
                     drawing = false; onChanged()
-                } else if (multi) startGesture(event, event.actionIndex)
+                } else if (multi) {
+                    if (!checkQuickPinch()) startGesture(event, event.actionIndex)
+                }
             }
             MotionEvent.ACTION_UP -> {
                 removeCallbacks(shapeHold)
                 removeCallbacks(longPress)
                 if (multi) {
-                    if (tappedFingers!=0) {
+                    val pinched = checkQuickPinch()
+                    if (!pinched && tappedFingers!=0) {
                         when (tappedFingers) { 2 -> { if(session.twoFingerUndo){session.command("undo"); onGesture("Undo")} }; 3 -> { if(session.threeFingerRedo){session.command("redo"); onGesture("Redo")} }; 4 -> if(session.fourFingerFullScreen)onToggleInterface() }
                         onChanged()
                     }

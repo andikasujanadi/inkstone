@@ -32,9 +32,6 @@ internal object StudioMotion {
             .setDuration(240).setInterpolator(ease).withEndAction{if(!show)view.visibility=View.INVISIBLE}.start()
     }
     fun content(view:View){
-        if(!ValueAnimator.areAnimatorsEnabled())return
-        if(view is ViewGroup)for(i in 0 until view.childCount){val child=view.getChildAt(i);child.alpha=.35f;child.translationY=4*view.resources.displayMetrics.density
-            child.animate().alpha(1f).translationY(0f).setDuration(260).setInterpolator(ease).start()}
     }
     fun bounce(view:View){
         if(!ValueAnimator.areAnimatorsEnabled())return

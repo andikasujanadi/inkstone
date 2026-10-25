@@ -104,13 +104,18 @@ class DrawingSession(width: Int, height: Int) : Closeable {
     val canvasWidth get() = info.getInt("width")
     val canvasHeight get() = info.getInt("height")
 
-    private class ToolBrush(var preset:BrushPreset){
+    class ToolBrush(var preset:BrushPreset){
         var size=preset.size;var opacity=1f;var flow=preset.flow
         var pressureSize=preset.pressureSize;var pressureOpacity=preset.pressureOpacity
     }
-    private val paintBrush=ToolBrush(brushPresets[0])
-    private val eraseBrush=ToolBrush(brushPresets[0])
-    private val currentBrush get()=if(tool=="Erase")eraseBrush else paintBrush
+    val paintBrush=ToolBrush(brushPresets[0])
+    val smudgeBrush=ToolBrush(brushPresets.find { it.name == "Medium Blend" } ?: brushPresets[0])
+    val eraseBrush=ToolBrush(brushPresets[0])
+    val currentBrush get()=when(tool) {
+        "Erase" -> eraseBrush
+        "Smudge" -> smudgeBrush
+        else -> paintBrush
+    }
     var preset:BrushPreset
         get()=currentBrush.preset
         set(value){currentBrush.preset=value}
@@ -156,6 +161,7 @@ class DrawingSession(width: Int, height: Int) : Closeable {
     var fourFingerFullScreen=true
     var holdEyedropper=true
     var penButtonErase=true
+    var pinchToFit=true
     var rightSidebar = false
     var lightInterface = false
     var dynamicBrushScaling=true
@@ -173,7 +179,7 @@ class DrawingSession(width: Int, height: Int) : Closeable {
         if(phase==0)penActive=true
         if(phase==2||phase==3)penActive=false
         val erasing=eraser||tool=="Erase"
-        val brush=if(erasing)eraseBrush else paintBrush
+        val brush=if(erasing)eraseBrush else if(tool=="Smudge")smudgeBrush else paintBrush
         val kind=if(erasing)64+brush.preset.kind else if(tool=="Smudge")128+brush.preset.kind else brush.preset.kind
         // Erasing uses alpha coverage; the unused color carries edge hardness to both renderers.
         val ink=if(erasing)(eraserHardness.coerceIn(0f,1f)*255+.5f).toInt() else color

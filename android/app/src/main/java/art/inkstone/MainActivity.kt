@@ -17,6 +17,38 @@ import java.io.ByteArrayOutputStream
 import java.util.concurrent.Executors
 import java.util.zip.GZIPOutputStream
 
+data class KeyShortcut(val keyCode: Int, val ctrl: Boolean, val alt: Boolean, val shift: Boolean) {
+    fun matches(event: KeyEvent): Boolean {
+        if (keyCode <= 0 || event.keyCode != keyCode) return false
+        val c = event.isCtrlPressed
+        val a = event.isAltPressed
+        val s = event.isShiftPressed
+        return c == ctrl && a == alt && s == shift
+    }
+
+    fun display(): String {
+        if (keyCode <= 0) return "None"
+        val parts = mutableListOf<String>()
+        if (ctrl) parts.add("Ctrl")
+        if (alt) parts.add("Alt")
+        if (shift) parts.add("Shift")
+        val keyName = when (keyCode) {
+            KeyEvent.KEYCODE_FORWARD_DEL -> "Del"
+            KeyEvent.KEYCODE_DEL -> "Backspace"
+            KeyEvent.KEYCODE_ESCAPE -> "Esc"
+            KeyEvent.KEYCODE_SPACE -> "Space"
+            KeyEvent.KEYCODE_ENTER -> "Enter"
+            KeyEvent.KEYCODE_TAB -> "Tab"
+            else -> {
+                val label = KeyEvent.keyCodeToString(keyCode).removePrefix("KEYCODE_")
+                if (label.length == 1) label else label.lowercase().replaceFirstChar { it.uppercase() }
+            }
+        }
+        parts.add(keyName)
+        return parts.joinToString("+")
+    }
+}
+
 class MainActivity : Activity() {
     lateinit var store: DocumentStore
     var session: DrawingSession? = null; private set
@@ -42,6 +74,64 @@ class MainActivity : Activity() {
     private var onImported: ((Uri) -> Unit)? = null
     var lastInputDescription = "Draw with your pen to inspect its input capabilities."
     private val prefs by lazy { getSharedPreferences("studio", MODE_PRIVATE) }
+
+    var recordingShortcutAction: String? = null; private set
+    private var onShortcutRecorded: ((String, KeyShortcut) -> Unit)? = null
+
+    fun startRecordingShortcut(action: String, onRecorded: (String, KeyShortcut) -> Unit) {
+        recordingShortcutAction = action
+        onShortcutRecorded = onRecorded
+    }
+
+    fun cancelRecordingShortcut() {
+        recordingShortcutAction = null
+        onShortcutRecorded = null
+    }
+
+    var lastDrawingTool: String = "Paint"
+
+    fun toggleEraser() {
+        val s = session ?: return
+        if (s.tool == "Erase") {
+            s.tool = lastDrawingTool
+        } else {
+            if (s.tool in listOf("Paint", "Smudge")) {
+                lastDrawingTool = s.tool
+            }
+            s.tool = "Erase"
+        }
+        editor?.onToolSwitched() ?: run {
+            editor?.refreshTools()
+            editor?.canvas?.invalidate()
+        }
+    }
+
+    fun getShortcut(action: String): KeyShortcut {
+        val defCode = when(action) {
+            "undo", "redo" -> KeyEvent.KEYCODE_Z
+            "toggle_eraser" -> KeyEvent.KEYCODE_E
+            else -> 0
+        }
+        val defCtrl = when(action) {
+            "undo", "redo" -> true
+            else -> false
+        }
+        val defShift = action == "redo"
+        val code = prefs.getInt("shortcut_${action}_code", defCode)
+        val ctrl = prefs.getBoolean("shortcut_${action}_ctrl", defCtrl)
+        val alt = prefs.getBoolean("shortcut_${action}_alt", false)
+        val shift = prefs.getBoolean("shortcut_${action}_shift", defShift)
+        return KeyShortcut(code, ctrl, alt, shift)
+    }
+
+    fun setShortcut(action: String, shortcut: KeyShortcut) {
+        prefs.edit()
+            .putInt("shortcut_${action}_code", shortcut.keyCode)
+            .putBoolean("shortcut_${action}_ctrl", shortcut.ctrl)
+            .putBoolean("shortcut_${action}_alt", shortcut.alt)
+            .putBoolean("shortcut_${action}_shift", shortcut.shift)
+            .apply()
+    }
 
     private var navigationGeneration=0L
     internal var navigationBusy=false;private set
@@ -148,16 +238,30 @@ class MainActivity : Activity() {
         s.cursorOpacity=prefs.getFloat("cursorOpacity",1f)
         s.twoFingerUndo=prefs.getBoolean("twoFingerUndo",true);s.threeFingerRedo=prefs.getBoolean("threeFingerRedo",true)
         s.fourFingerFullScreen=prefs.getBoolean("fourFingerFullScreen",true);s.holdEyedropper=prefs.getBoolean("holdEyedropper",true);s.penButtonErase=prefs.getBoolean("penButtonErase",true)
+        s.pinchToFit=prefs.getBoolean("pinchToFit",true)
         s.color = prefs.getInt("color", 0xff202020.toInt())
+        fun restoreBrush(b: DrawingSession.ToolBrush, key: String) {
+            val name = prefs.getString("${key}_preset", null)
+            if (name != null) brushPresets.find { it.name == name }?.let { b.preset = it }
+            b.size = prefs.getFloat("${key}_size", b.preset.size)
+            b.opacity = prefs.getFloat("${key}_opacity", 1f)
+        }
+        restoreBrush(s.paintBrush, "paint_brush")
+        restoreBrush(s.smudgeBrush, "smudge_brush")
+        restoreBrush(s.eraseBrush, "erase_brush")
     }
     fun savePreferences() {
         val s = session ?: return
         prefs.edit().putString("symmetryMode",s.symmetryMode).putFloat("eraserHardness",s.eraserHardness).putBoolean("penOnly",s.penOnly).putBoolean("protectControls",s.protectControls).putFloat("stabilization",s.stabilization).putString("rendererMode",s.rendererMode).putBoolean("pressureEnabled",s.pressureEnabled).putBoolean("canvasLocked",s.canvasLocked).putBoolean("quickShape",s.quickShape).putString("cursorStyle",s.cursorStyle).putFloat("cursorOpacity",s.cursorOpacity)
             .putBoolean("twoFingerUndo",s.twoFingerUndo).putBoolean("threeFingerRedo",s.threeFingerRedo)
-            .putBoolean("fourFingerFullScreen",s.fourFingerFullScreen).putBoolean("holdEyedropper",s.holdEyedropper).putBoolean("penButtonErase",s.penButtonErase)
+            .putBoolean("fourFingerFullScreen",s.fourFingerFullScreen).putBoolean("holdEyedropper",s.holdEyedropper).putBoolean("penButtonErase",s.penButtonErase).putBoolean("pinchToFit",s.pinchToFit)
             .putBoolean("finger", s.fingerDrawing).putBoolean("right", s.rightSidebar)
             .putBoolean("dynamicBrushScaling",s.dynamicBrushScaling).putFloat("rapidUndoDelay",s.rapidUndoDelay).putFloat("selectionVisibility",s.selectionVisibility)
-            .putBoolean("light", s.lightInterface).putBoolean("cursor", s.cursor).putInt("color", editor?.colorBeforeMask?:s.color).apply()
+            .putBoolean("light", s.lightInterface).putBoolean("cursor", s.cursor).putInt("color", editor?.colorBeforeMask?:s.color)
+            .putString("paint_brush_preset", s.paintBrush.preset.name).putFloat("paint_brush_size", s.paintBrush.size).putFloat("paint_brush_opacity", s.paintBrush.opacity)
+            .putString("smudge_brush_preset", s.smudgeBrush.preset.name).putFloat("smudge_brush_size", s.smudgeBrush.size).putFloat("smudge_brush_opacity", s.smudgeBrush.opacity)
+            .putString("erase_brush_preset", s.eraseBrush.preset.name).putFloat("erase_brush_size", s.eraseBrush.size).putFloat("erase_brush_opacity", s.eraseBrush.opacity)
+            .apply()
     }
     private fun openEditor() {
         val s = session ?: return
@@ -388,14 +492,66 @@ class MainActivity : Activity() {
     override fun onDestroy() { cancelNavigation();pendingExportCleanup?.invoke();pendingExportCleanup=null;pendingExport=null;handler.removeCallbacks(autosave); session?.close(); io.shutdown(); super.onDestroy() }
     @Deprecated("Native back handling")
     override fun onBackPressed() { if(navigationBusy){cancelNavigation();return};if(canvasSetup!=null){showGallery();return};if(canvasPopup?.isShowing==true){canvasPopup?.dismiss();return}; if(vectorEditor!=null){if(vectorEditor?.dismissPanel()!=true)gallery();return};if (editor != null) { if (!editor!!.dismissPanel()) gallery() } else super.onBackPressed() }
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (event.action == KeyEvent.ACTION_DOWN) {
+            recordingShortcutAction?.let { action ->
+                val keyCode = event.keyCode
+                if (keyCode in listOf(
+                    KeyEvent.KEYCODE_CTRL_LEFT, KeyEvent.KEYCODE_CTRL_RIGHT,
+                    KeyEvent.KEYCODE_SHIFT_LEFT, KeyEvent.KEYCODE_SHIFT_RIGHT,
+                    KeyEvent.KEYCODE_ALT_LEFT, KeyEvent.KEYCODE_ALT_RIGHT
+                )) {
+                    return true
+                }
+                val shortcut = KeyShortcut(
+                    keyCode = keyCode,
+                    ctrl = event.isCtrlPressed,
+                    alt = event.isAltPressed,
+                    shift = event.isShiftPressed
+                )
+                setShortcut(action, shortcut)
+                val cb = onShortcutRecorded
+                recordingShortcutAction = null
+                onShortcutRecorded = null
+                cb?.invoke(action, shortcut)
+                message("Shortcut for ${action.replaceFirstChar { it.uppercase() }} set to ${shortcut.display()}")
+                return true
+            }
+        }
+        return super.dispatchKeyEvent(event)
+    }
+
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+        val undoShortcut = getShortcut("undo")
+        val redoShortcut = getShortcut("redo")
+        val eraserShortcut = getShortcut("toggle_eraser")
+
+        if (undoShortcut.matches(event)) {
+            if (vectorEditor != null) {
+                vectorEditor?.canvas?.undo()
+            } else {
+                session?.let { s -> s.command("undo"); scheduleSave() }
+            }
+            return true
+        }
+        if (redoShortcut.matches(event)) {
+            if (vectorEditor != null) {
+                vectorEditor?.canvas?.redo()
+            } else {
+                session?.let { s -> s.command("redo"); scheduleSave() }
+            }
+            return true
+        }
+        if (eraserShortcut.matches(event)) {
+            toggleEraser()
+            return true
+        }
+
         if(vectorEditor?.key(keyCode,event)==true)return true
         val s = session
         if (s != null && editor != null) {
-            if (event.isCtrlPressed && keyCode == KeyEvent.KEYCODE_Z) { s.command(if (event.isShiftPressed) "redo" else "undo"); scheduleSave(); return true }
             if (event.isCtrlPressed && keyCode == KeyEvent.KEYCODE_S) { saveCurrent { if (it) message("Artwork saved") }; return true }
-            if (keyCode == KeyEvent.KEYCODE_B) { s.tool = "Paint"; editor?.refreshTools(); return true }
-            if (keyCode == KeyEvent.KEYCODE_E) { s.tool = "Erase"; editor?.refreshTools(); return true }
+            if (keyCode == KeyEvent.KEYCODE_B) { s.tool = "Paint"; lastDrawingTool = "Paint"; editor?.refreshTools(); return true }
             if (keyCode == KeyEvent.KEYCODE_ESCAPE) { editor?.dismissPanel(); s.command("deselect"); editor?.canvas?.deselect(); return true }
         }
         return super.onKeyDown(keyCode, event)

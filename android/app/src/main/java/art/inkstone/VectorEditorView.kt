@@ -151,8 +151,68 @@ internal class VectorEditorView(val activity:MainActivity,val document:VectorDoc
     }
     private var reference:ReferencePanel?=null
     internal fun showReference(){reference?.let{it.bringToFront();return};reference=ReferencePanel(activity,{color->canvas.ink=color;canvas.edit{editableSelection()?.stroke=color};refresh()},{reference=null}).also{it.attach(this)}}
+    private fun shortcutSettings(){
+        val actions = listOf("undo" to "Undo", "redo" to "Redo", "toggle_eraser" to "Eraser / Previous")
+        val view = LinearLayout(activity).apply{
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(10), dp(20), dp(10))
+        }
+        fun refreshDialog() {
+            view.removeAllViews()
+            view.addView(TextView(activity).apply{
+                text = "Tap 'Set' then press a key combination (Ctrl, Alt, Shift supported)."
+                setTextColor(0xffb9c2ca.toInt())
+                setPadding(0, 0, 0, dp(12))
+            })
+            for ((key, name) in actions) {
+                val current = activity.getShortcut(key)
+                val isSetting = activity.recordingShortcutAction == key
+                val row = LinearLayout(activity).apply{
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    minimumHeight = dp(52)
+                }
+                row.addView(TextView(activity).apply{
+                    text = name; textSize = 16f; setTextColor(Color.WHITE)
+                }, LinearLayout.LayoutParams(0, -2, 1f))
+                row.addView(TextView(activity).apply{
+                    text = if(isSetting) "Press a new key" else current.display()
+                    setTextColor(if(isSetting) StudioColors.accent else 0xffaab8bf.toInt())
+                    setPadding(dp(8), 0, dp(12), 0)
+                })
+                row.addView(Button(activity).apply{
+                    text = if(isSetting) "Cancel" else "Set"
+                    setOnClickListener {
+                        if (isSetting) {
+                            activity.cancelRecordingShortcut()
+                            refreshDialog()
+                        } else {
+                            activity.startRecordingShortcut(key) { _, _ -> refreshDialog() }
+                            refreshDialog()
+                        }
+                    }
+                })
+                row.addView(Button(activity).apply{
+                    text = "Reset"
+                    setOnClickListener {
+                        activity.setShortcut(key, KeyShortcut(0, false, false, false))
+                        if (activity.recordingShortcutAction == key) activity.cancelRecordingShortcut()
+                        refreshDialog()
+                    }
+                })
+                view.addView(row)
+            }
+        }
+        refreshDialog()
+        AlertDialog.Builder(activity)
+            .setTitle("Shortcut keys")
+            .setView(view)
+            .setPositiveButton("Done") { _, _ -> activity.cancelRecordingShortcut() }
+            .setOnDismissListener { activity.cancelRecordingShortcut() }
+            .show()
+    }
     private fun actions(){panel("Actions",true){body->
-        for((label,action) in listOf<Pair<String,()->Unit>>("Reference image" to {dismissPanel();showReference()},"Import Inkstone / PSD" to {activity.importDocument()},"Stroke settings" to {strokeSettings()},"Object" to {objectActions()},"Fill" to {canvas.fillColor=if(canvas.fillColor==null)canvas.ink else null;canvas.edit{editableSelection()?.takeIf{it.isClosed}?.fill=canvas.fillColor}},"Fit" to {canvas.fit()},"Prefs" to {preferences()},"Save artwork" to {save()}))body.addView(button(label){action()},LinearLayout.LayoutParams(-1,dp(48)))
+        for((label,action) in listOf<Pair<String,()->Unit>>("Reference image" to {dismissPanel();showReference()},"Import Inkstone / PSD" to {activity.importDocument()},"Stroke settings" to {strokeSettings()},"Object" to {objectActions()},"Fill" to {canvas.fillColor=if(canvas.fillColor==null)canvas.ink else null;canvas.edit{editableSelection()?.takeIf{it.isClosed}?.fill=canvas.fillColor}},"Fit" to {canvas.fit()},"Shortcut keys" to {shortcutSettings()},"Prefs" to {preferences()},"Save artwork" to {save()}))body.addView(button(label){action()},LinearLayout.LayoutParams(-1,dp(48)))
         body.addView(TextView(activity).apply{text="Select an object to move it. Drag a corner to resize, the upper handle to rotate. Nodes selects anchors on the curve. Drag a selected anchor or its white handles; use Previous/Next and Point coordinates for precise edits.";setTextColor(0xffb9c2ca.toInt());setPadding(dp(8),dp(12),dp(8),dp(12))})
     }}
     private fun save(){
@@ -235,7 +295,6 @@ internal class VectorEditorView(val activity:MainActivity,val document:VectorDoc
     }
     override fun onDetachedFromWindow(){colorDrop.cancel();super.onDetachedFromWindow()}
     fun key(code:Int,event:KeyEvent):Boolean {
-        if(event.isCtrlPressed && code==KeyEvent.KEYCODE_Z){if(event.isShiftPressed)canvas.redo() else canvas.undo();return true}
         if(event.isCtrlPressed && code==KeyEvent.KEYCODE_S){activity.saveCurrent();return true}
         if(code==KeyEvent.KEYCODE_ESCAPE){canvas.cancelGesture();canvas.selectedId=null;refresh();return true}
         return false
