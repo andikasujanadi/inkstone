@@ -2,11 +2,11 @@
 
 ## Copyright holder
 
-Vincentius Bramasta Hartono is the creator and maintainer of Inkstone. Version 0.1.9-preview3 integrates changes by andikasujanadi from PR #1 (commit f19aa0903aed00e6a84bc3e4e86d42cd712f73cc), with local compatibility and regression fixes. Contribution credit does not imply a transfer of copyright. Third-party components retain their own authors and notices.
+Vincentius Bramasta Hartono is the creator and maintainer of Inkstone. Contributors retain rights in their own work, and third-party components retain their own authors and notices.
 
-## Contributor permissions
+## Commercial publishing
 
-The [contribution guide](../CONTRIBUTING.md) and [permission checklist](CONTRIBUTOR_PERMISSIONS.md) describe the review needed before accepting future code and before any commercial software distribution. No new CLA, copyright assignment or commercial grant is asserted for existing contributions.
+Commercial publishing rights in code owned by Vincentius Bramasta Hartono are reserved to him. Other users and contributors must obtain his prior written permission to sell, commercially distribute, or commercially license Inkstone, except where an applicable license or existing grant already permits that activity. Contributing does not automatically grant commercial publishing rights. See the [commercial publishing policy](CONTRIBUTOR_PERMISSIONS.md).
 
 ## Current source
 

@@ -6,6 +6,6 @@ Before opening a substantial code contribution, discuss the proposed change in a
 
 Read [LICENSE](LICENSE), [additional artwork permissions](ADDITIONAL_PERMISSIONS.md), and the [licensing history](docs/LICENSING.md). Preserve contributor attribution and all third-party notices. Contribution credit is not copyright assignment.
 
-Commercial software distribution may require rights beyond the public noncommercial license. Before accepting a new code contribution, the maintainer must review the contributor's intended grant and obtain any additional written permission or signed agreement needed for that distribution plan. Do not assume a pull request or a credit line supplies those additional rights. See the [permission checklist](docs/CONTRIBUTOR_PERMISSIONS.md).
+Contributing does not automatically grant permission to sell, commercially distribute, or commercially license Inkstone. Commercial publishing rights in code owned by Vincentius Bramasta Hartono are reserved to him; other users and contributors need his prior written permission, except where an applicable license or existing grant already permits the activity. See the [commercial publishing policy](docs/CONTRIBUTOR_PERMISSIONS.md).
 
-No contributor agreement is executed automatically by this document. Keep written permission records separately; do not commit private contact details or signatures.
+Contributors retain copyright in their own work. Contributions do not transfer copyright or override existing license grants. Commercial artwork remains permitted under ADDITIONAL_PERMISSIONS.md.

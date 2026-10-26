@@ -21,7 +21,7 @@ Guides are overlays rather than assisted stroke snapping, and their settings are
 
 ## Contributors and licensing
 
-The existing contribution by andikasujanadi remains credited. See [CONTRIBUTING](../CONTRIBUTING.md) and the [permission checklist](CONTRIBUTOR_PERMISSIONS.md) for future contribution/commercial-rights review. These documents do not assert that an existing contributor has signed a new CLA or transferred copyright. Software and artwork permissions remain as described in [licensing](LICENSING.md).
+Contributor and third-party attribution is retained. Contributing does not automatically grant commercial software publishing rights. See [CONTRIBUTING](../CONTRIBUTING.md), the [commercial publishing policy](CONTRIBUTOR_PERMISSIONS.md), and [licensing](LICENSING.md).
 
 Detailed workflows are retained in [preview4](LOCAL_PREVIEW_019_4.md), [preview5](LOCAL_PREVIEW_019_5.md) and [preview6](LOCAL_PREVIEW_019_6.md). The current folder-boundary instructions supersede earlier Outside groups instructions.
 
