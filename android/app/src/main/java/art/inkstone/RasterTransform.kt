@@ -50,7 +50,7 @@ internal class RasterTransform(private val canvas:PaintCanvas,private val sessio
     private val p=Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
     val ready get()=snapshot!=null && !committing
     val displaying get()=snapshot!=null
-    val bounds get()=snapshot?.let{val q=mappedMesh();RectF(q.minOf{it.x},q.minOf{it.y},q.maxOf{it.x},q.maxOf{it.y})}
+    val bounds get()=snapshot?.let{val q=if(meshChanged())SmoothWarp.grid(mappedMesh())else mappedMesh();RectF(q.minOf{it.x},q.minOf{it.y},q.maxOf{it.x},q.maxOf{it.y})}
     private fun regularMesh():List<PointF>{val r=snapshot?.bounds?:return emptyList();return (0..3).flatMap{y->(0..3).map{x->PointF(r.left+r.width()*x/3,r.top+r.height()*y/3)}}}
     private fun resetMesh(){mesh.clear();mesh.addAll(regularMesh())}
     private fun meshChanged()=mesh.zip(regularMesh()).any{(a,b)->hypot(a.x-b.x,a.y-b.y)>.001f}
@@ -78,7 +78,7 @@ internal class RasterTransform(private val canvas:PaintCanvas,private val sessio
         committing=true
         val operation:String;val payload=JSONObject().put("filter",interpolation)
         if(meshChanged()){
-            operation="transformMesh";payload.put("columns",3).put("rows",3).put("points",JSONArray().also{array->mappedMesh().forEach{array.put(JSONArray().put(it.x).put(it.y))}})
+            operation="transformMesh";payload.put("columns",SmoothWarp.STEPS).put("rows",SmoothWarp.STEPS).put("points",JSONArray().also{array->SmoothWarp.grid(mappedMesh()).forEach{array.put(JSONArray().put(it.x).put(it.y))}})
         }else{operation="transformProjective";payload.put("matrix",JSONArray(values.map{it.toDouble()}))}
         session.command(operation,payload){result->if(result.has("error")){dispose();canvas.invalidate()}else awaitingFrame=true}
     }
@@ -90,9 +90,8 @@ internal class RasterTransform(private val canvas:PaintCanvas,private val sessio
         if(index==s.active){val moving=s.planes.last();moving.image?.let{
             p.isFilterBitmap=interpolation!="Nearest"
             if(meshChanged()){
-                val grid=mappedMesh();val steps=24;val vertices=FloatArray((steps+1)*(steps+1)*2)
-                for(y in 0..steps)for(x in 0..steps){val col=(x/8).coerceAtMost(2);val row=(y/8).coerceAtMost(2);val u=(x-col*8)/8f;val v=(y-row*8)/8f;val a=grid[row*4+col];val b=grid[row*4+col+1];val c0=grid[(row+1)*4+col+1];val d=grid[(row+1)*4+col];val at=(y*(steps+1)+x)*2
-                    vertices[at]=(1-u)*(1-v)*a.x+u*(1-v)*b.x+u*v*c0.x+(1-u)*v*d.x;vertices[at+1]=(1-u)*(1-v)*a.y+u*(1-v)*b.y+u*v*c0.y+(1-u)*v*d.y}
+                val steps=SmoothWarp.STEPS
+                val vertices=SmoothWarp.grid(mappedMesh()).flatMap{point->listOf(point.x,point.y)}.toFloatArray()
                 c.drawBitmapMesh(it,steps,steps,vertices,0,null,0,p)
             }
             else{val save=c.save();c.concat(matrix);c.drawBitmap(it,null,moving.rect,p);c.restoreToCount(save)}
@@ -134,8 +133,9 @@ internal class RasterTransform(private val canvas:PaintCanvas,private val sessio
         if(snapshot==null)return;val q=if(mode=="Warp")mappedMesh() else mapped();val d=canvas.resources.displayMetrics.density/canvas.transformZoom
         p.color=StudioColors.accent;p.style=Paint.Style.STROKE;p.strokeWidth=1.3f*d;p.pathEffect=DashPathEffect(floatArrayOf(6*d,4*d),0f)
         if(mode=="Warp"){
-            for(row in 0..3)c.drawPath(Path().apply{moveTo(q[row*4].x,q[row*4].y);for(col in 1..3)lineTo(q[row*4+col].x,q[row*4+col].y)},p)
-            for(col in 0..3)c.drawPath(Path().apply{moveTo(q[col].x,q[col].y);for(row in 1..3)lineTo(q[row*4+col].x,q[row*4+col].y)},p)
+            val grid=SmoothWarp.grid(q);val steps=SmoothWarp.STEPS;val stride=steps+1
+            for(row in 0..3)c.drawPath(Path().apply{for(col in 0..steps){val point=grid[row*(steps/3)*stride+col];if(col==0)moveTo(point.x,point.y)else lineTo(point.x,point.y)}},p)
+            for(col in 0..3)c.drawPath(Path().apply{for(row in 0..steps){val point=grid[row*stride+col*(steps/3)];if(row==0)moveTo(point.x,point.y)else lineTo(point.x,point.y)}},p)
         }else c.drawPath(Path().apply{moveTo(q[0].x,q[0].y);for(i in 1..3)lineTo(q[i].x,q[i].y);close()},p)
         p.pathEffect=null
         snapX?.let{c.drawLine(it,0f,it,session.canvasHeight.toFloat(),p)};snapY?.let{c.drawLine(0f,it,session.canvasWidth.toFloat(),it,p)}
@@ -162,7 +162,16 @@ internal class RasterTransform(private val canvas:PaintCanvas,private val sessio
         var sign=0f
         for(i in points.indices){val a=points[i];val b=points[(i+1)%points.size];val c=points[(i+2)%points.size];val cross=(b.x-a.x)*(c.y-b.y)-(b.y-a.y)*(c.x-b.x);if(abs(cross)<.0001f)return false;if(sign!=0f && sign*cross<0)return false;sign=cross};return true
     }
-    private fun validMesh(points:List<PointF>)=(0..2).all{row->(0..2).all{col->val i=row*4+col;convex(listOf(points[i],points[i+1],points[i+5],points[i+4]))}}
+    private fun validMesh(points:List<PointF>):Boolean {
+        val grid=SmoothWarp.grid(points);val n=SmoothWarp.STEPS
+        var orientation=0f
+        for(row in 0 until n)for(col in 0 until n){val i=row*(n+1)+col;val q=listOf(grid[i],grid[i+1],grid[i+n+2],grid[i+n+1])
+            if(!convex(q))return false
+            val cross=(q[1].x-q[0].x)*(q[2].y-q[1].y)-(q[1].y-q[0].y)*(q[2].x-q[1].x)
+            if(orientation*cross<0)return false;orientation=cross
+        };return true
+    }
+
     fun scale(factor:Float){ensure();val s=snapshot?:return;val r=RectF();matrix.mapRect(r,s.bounds);replace(Matrix(matrix).apply{postScale(factor,factor,r.centerX(),r.centerY())});canvas.onChanged()}
     fun operation(key:String,value:Float){ensure();val s=snapshot?:return;val r=RectF();matrix.mapRect(r,s.bounds)
         replace(Matrix(matrix).apply{when(key){"sx"->postScale(value,1f,r.centerX(),r.centerY());"sy"->postScale(1f,value,r.centerX(),r.centerY());"angle"->postRotate(value*180f/Math.PI.toFloat(),r.centerX(),r.centerY())}});canvas.onChanged()

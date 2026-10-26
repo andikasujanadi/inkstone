@@ -1,5 +1,41 @@
 # Verification — 26 October 2026
 
+## 0.1.9-preview7 release checks
+
+- 95 Android framework/JNI tests and 67 standard Rust tests passed. New regression checks verify 20 dp group-member indentation in Raster/Vector and returning to root alignment.
+- Android build/lint: zero errors, 97 warnings. Grouped Raster screenshot inspected. Native binaries are unchanged from preview6's ten passing physical Metal GPU checks and independent SVG/PSD/masked PSD validation.
+- Package `art.inkstone.preview`, version code 25, `0.1.9-preview7`; existing v2 signer retained. Both packaged ABI libraries match validated outputs, with fourteen JNI methods and 16 KB alignment. Bundled licensing files match source.
+- APK `releases/inkstone-0.1.9-preview7-debug.apk`: 10,352,969 bytes; SHA-256 `3d5addd0e19859262afeda5f93166f847083b58d788a374b5c5de3ae48487952`.
+- GitHub CI/release status is verified separately during publication. Physical Android testing remains pending. [Release instructions](LOCAL_PREVIEW_019_7.md).
+
+
+## Unpublished local 0.1.9-preview6
+
+- 94 Android framework/JNI tests, 67 standard Rust tests and ten physical Metal GPU tests passed. Includes slow Fade lead-in/taps, folder boundaries and sole-member exit, line/folder glow distinction, layer and gallery settlement, persistent tags/stacks, sort/filter, and actual artwork drops between stacks and Gallery.
+- Android build and lint passed: zero errors, 97 warnings. Independent SVG, layered PSD and masked PSD validation passed. Gallery screenshots were inspected.
+- Package `art.inkstone.preview`, version code 24, `0.1.9-preview6`; existing v2 signer retained. Both packaged ABI libraries match rebuilt outputs, with fourteen JNI methods and 16 KB alignment. Bundled license files match source.
+- APK `releases/inkstone-0.1.9-preview6-debug.apk`: 10,352,825 bytes; SHA-256 `9c7fe7ef6a26602e8b8782442c57ebacea797444275065ed64c6e97e0e05abcb`.
+- Local only; hardware drag/stylus/Vulkan and animation pacing still need device testing. [Preview instructions](LOCAL_PREVIEW_019_6.md).
+
+
+## Unpublished local 0.1.9-preview5
+
+- 88 Android framework/JNI tests, 65 standard Rust tests and ten physical Metal GPU tests passed. The final perspective-ray spacing adjustment also passed a focused guide test and rebuild. Coverage includes Fade start/taps, real layer drops, archive-safe history names, QuickShape names, vanishing point dragging, and Liquify modes/cancel/selection/one-step Undo.
+- Android build and lint passed: zero errors, 96 warnings. Independent SVG, layered PSD and masked PSD validation passed. Guide and Liquify screenshots were inspected.
+- Package `art.inkstone.preview`, version code 23, `0.1.9-preview5`. V2 signer retained; both packaged ABI libraries match rebuilt outputs, with fourteen JNI methods and 16 KB alignment. Bundled license files match current source.
+- APK `releases/inkstone-0.1.9-preview5-debug.apk`: 10,302,769 bytes; SHA-256 `0f0d195eccb35225e861d8c13af080a85eb048ad123805a9231e00fe862f7586`.
+- Local only. Physical Android pen/Vulkan and large-radius Liquify performance are unverified. [Preview instructions](LOCAL_PREVIEW_019_5.md).
+
+
+## Unpublished local 0.1.9-preview4
+
+- 84 Android tests, 61 standard Rust tests and nine physical Metal GPU tests passed. New coverage includes speed-sensitive Fade through timed/merged JNI input, CPU/GPU parity, continuous Warp tangents, group UI/save/history/member flags, persistent Recent history and category scroll retention.
+- Android build and lint passed: zero errors, 95 warnings. Independent SVG, layered PSD and masked PSD checks passed. Live/committed Warp and group panel screenshots were inspected.
+- Package `art.inkstone.preview`, version code 22, `0.1.9-preview4`; v2 signer retained. Both packaged native ABI libraries match the rebuilt outputs, with fourteen JNI symbols and 16 KB ELF alignment.
+- APK `releases/inkstone-0.1.9-preview4-debug.apk`: 10,250,653 bytes, SHA-256 `2554cfad1419b01b17551726d0b447c8d83c68e0138e4b07864aa6b53a468979`.
+- Local only; no push/tag/release. Android hardware input and Vulkan still require testing. See [instructions and group limitations](LOCAL_PREVIEW_019_4.md).
+
+
 ## 0.1.9-preview3 — PR #1 integration and release candidate
 
 - Integrated contribution `f19aa0903aed00e6a84bc3e4e86d42cd712f73cc` by andikasujanadi into the preview2 working tree, with local compatibility fixes. Prepared for publication on 26 October 2026; Recent, Fade, category scrolling and missing layer folders are explicitly recorded in KNOWN_ISSUES.md.

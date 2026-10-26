@@ -6,6 +6,7 @@ import android.view.View
 import kotlin.math.*
 
 internal class VectorCanvas(private val activity:MainActivity,val document:VectorDocument):View(activity){
+    val guides=DrawingGuide(activity)
     var tool="Pen"
     var ink=0xff202020.toInt()
     var strokeWidth=5f
@@ -43,15 +44,15 @@ internal class VectorCanvas(private val activity:MainActivity,val document:Vecto
     fun snapshot():ByteArray=before?.clone()?:document.encode()
     fun cancelGesture(){before?.let{document.restore(it)};before=null;draft=null;pointer=-1;mode="";multi=false;invalidate();onSelection()}
     fun changeTool(value:String){joiningPaths=false;addingAnchor=false;cancelGesture();if(value!="Nodes")selectedNode=null;tool=value;invalidate();onSelection()}
-    fun undo(){addingAnchor=false;cancelGesture();if(document.undo()){selectedId=null;selectedNode=null;onChanged()};invalidate();onSelection()}
-    fun redo(){addingAnchor=false;cancelGesture();if(document.redo()){selectedId=null;selectedNode=null;onChanged()};invalidate();onSelection()}
+    fun undo(){addingAnchor=false;cancelGesture();if(document.undo()){selectedId=null;selectedNode=null;onChanged()};activity.message(document.historyNotice);invalidate();onSelection()}
+    fun redo(){addingAnchor=false;cancelGesture();if(document.redo()){selectedId=null;selectedNode=null;onChanged()};activity.message(document.historyNotice);invalidate();onSelection()}
     fun edit(change:()->Unit){cancelGesture();runCatching{document.edit(change)}.onFailure{activity.message(it.message?:"Could not change object")}.onSuccess{onChanged()};invalidate();onSelection()}
     override fun onDraw(c:Canvas){
         c.drawColor(StudioColors.workspace);paint.color=0x0bffffff;paint.strokeWidth=density
         var x=0f;while(x<width){c.drawLine(x,0f,x,height.toFloat(),paint);x+=24*density};var y=0f;while(y<height){c.drawLine(0f,y,width.toFloat(),y,paint);y+=24*density}
         val page=c.save();c.concat(screenMatrix());val clipped=c.save();c.clipRect(0f,0f,document.width.toFloat(),document.height.toFloat())
         if(!document.backgroundVisible){c.drawColor(0xffe2e4e7.toInt());paint.color=0xffc5c9ce.toInt();for(yy in 0 until document.height step 32)for(xx in 0 until document.width step 32)if((xx/32+yy/32)%2==0)c.drawRect(xx.toFloat(),yy.toFloat(),xx+32f,yy+32f,paint)}
-        document.draw(c);draft?.let{VectorDocument.drawObject(c,it)};c.restoreToCount(clipped)
+        document.draw(c);guides.draw(c,document.width.toFloat(),document.height.toFloat(),zoom);draft?.let{VectorDocument.drawObject(c,it)};c.restoreToCount(clipped)
         selected?.takeIf{tool in listOf("Select","Nodes")}?.let{obj->
             val r=obj.bounds();paint.color=StudioColors.accent;paint.style=Paint.Style.STROKE;paint.strokeWidth=1.3f*density/zoom;c.drawRect(r,paint)
             paint.style=Paint.Style.FILL
@@ -85,21 +86,21 @@ internal class VectorCanvas(private val activity:MainActivity,val document:Vecto
     fun nodePosition():PointF?{val obj=selected?:return null;return VectorGeometry.anchors(obj).firstOrNull{it.first==selectedNode}?.second?.let{PointF(it.x,it.y)}}
     fun setNodePosition(x:Float,y:Float){
         val obj=selected?:return;val index=selectedNode?:return
-        if(document.owner(obj.id)?.locked==true){activity.message("This layer is locked");return}
+        if(document.owner(obj.id)?.effectiveLocked==true){activity.message("This layer is locked");return}
         edit{if(obj.kind=="Pen")obj.toBezier();val old=obj.points[index];val dx=x-old.x;val dy=y-old.y
             for(i in if(obj.kind=="Bezier")listOf(index-1,index,index+1)else listOf(index))obj.points.getOrNull(i)?.offset(dx,dy)
             obj.geometryChanged()}
     }
     fun addAnchorMode(){
         cancelGesture();val obj=selected?:return
-        if(document.owner(obj.id)?.locked==true){activity.message("This layer is locked");return}
+        if(document.owner(obj.id)?.effectiveLocked==true){activity.message("This layer is locked");return}
         if(obj.kind !in listOf("Line","Pen","Bezier")){activity.message("Choose a line or pen path");return}
         addingAnchor=!addingAnchor;onSelection();invalidate()
     }
     private fun addAnchor(point:PointF){
         val id=selectedId?:return
         runCatching{var index=0;document.edit{
-            val obj=checkNotNull(document.objectById(id));require(document.owner(id)?.locked!=true){"This layer is locked"}
+            val obj=checkNotNull(document.objectById(id));require(document.owner(id)?.effectiveLocked!=true){"This layer is locked"}
             index=VectorGeometry.insertAnchor(obj,point,24*density/zoom)
         };index}.onSuccess{selectedNode=it;addingAnchor=false;onChanged()}
             .onFailure{activity.message(it.message?:"Could not add anchor")}
@@ -122,19 +123,19 @@ internal class VectorCanvas(private val activity:MainActivity,val document:Vecto
         val h=hit!!;selectedId=h.objectId;val obj=selected?:return;document.active=document.layers.indexOf(document.owner(obj.id))
         val picked=h.index
         if(!handle)selectedNode=picked
-        if(document.owner(obj.id)?.locked==true){activity.message("This layer is locked");onSelection();return}
+        if(document.owner(obj.id)?.effectiveLocked==true){activity.message("This layer is locked");onSelection();return}
         before=document.encode();if(obj.kind=="Pen")obj.toBezier();node=picked;mode=if(handle)"handle"else"node";origin=point;nodeMoved=false
         nodeOriginal=obj.points.map{PointF(it.x,it.y)};onSelection();invalidate()
     }
     fun closePath(){
         val obj=selected?:return
-        if(document.owner(obj.id)?.locked==true){activity.message("This layer is locked");return}
+        if(document.owner(obj.id)?.effectiveLocked==true){activity.message("This layer is locked");return}
         if(obj.kind !in listOf("Pen","Line","Bezier"))return
         edit{obj.closed=!obj.closed;if(!obj.closed)obj.fill=null;obj.geometryChanged()};joiningPaths=false
     }
     fun joinPathMode(){
         cancelGesture();val obj=selected?:return
-        if(obj.isClosed || document.owner(obj.id)?.locked==true){activity.message("Choose an unlocked open path");return}
+        if(obj.isClosed || document.owner(obj.id)?.effectiveLocked==true){activity.message("Choose an unlocked open path");return}
         addingAnchor=false;joiningPaths=!joiningPaths;onSelection()
         if(joiningPaths)activity.message("Tap an endpoint of another path to join it")
     }
@@ -146,7 +147,7 @@ internal class VectorCanvas(private val activity:MainActivity,val document:Vecto
         if(hit==null){activity.message("Tap an endpoint on another open path in the same layer");return}
         val other=hit.first;val reverseFirst=selectedNode==0;val reverseOther=hit.second!=0
         edit{
-            require(!layer.locked){"This layer is locked"}
+            require(!layer.effectiveLocked){"This layer is locked"}
             first.toBezier();other.toBezier()
             if(reverseFirst)first.points.reverse()
             val inverse=Matrix();check(first.matrix.invert(inverse))
@@ -161,9 +162,9 @@ internal class VectorCanvas(private val activity:MainActivity,val document:Vecto
     fun fillAt(x:Float,y:Float,color:Int):Boolean{
         cancelGesture();val point=pagePoint(x,y)
         if(point.x !in 0f..document.width.toFloat() || point.y !in 0f..document.height.toFloat())return false
-        val obj=document.layers.asReversed().filter{it.visible && it.opacity>0}.flatMap{it.objects.asReversed()}.firstOrNull{it.containsInterior(point)}
+        val obj=document.layers.asReversed().filter{it.effectiveVisible && it.opacity>0}.flatMap{it.objects.asReversed()}.firstOrNull{it.containsInterior(point)}
         if(obj==null){activity.message("Drop inside a closed path. Use Nodes → Close path for freehand lines.");return false}
-        if(document.owner(obj.id)?.locked==true){activity.message("This layer is locked");return false}
+        if(document.owner(obj.id)?.effectiveLocked==true){activity.message("This layer is locked");return false}
         edit{obj.fill=color};return true
     }
     private fun begin(point:PointF){
@@ -181,11 +182,11 @@ internal class VectorCanvas(private val activity:MainActivity,val document:Vecto
                 obj=document.hit(point,8*density/zoom);selectedId=obj?.id
                 if(obj!=null){document.active=document.layers.indexOf(document.owner(obj.id));mode="move"}
             }
-            if(obj!=null && document.owner(obj.id)?.locked==true){activity.message("This layer is locked");mode=""}
+            if(obj!=null && document.owner(obj.id)?.effectiveLocked==true){activity.message("This layer is locked");mode=""}
             if(obj!=null && mode.isNotEmpty()){before=document.encode();originalMatrix=Matrix(obj.matrix);origin=point}
             onSelection();invalidate();return
         }
-        if(document.layers[document.active].locked){activity.message("This layer is locked");return}
+        if(document.layers[document.active].effectiveLocked){activity.message("This layer is locked");return}
         before=document.encode();selectedId=null;selectedNode=null;filtered=PointF(point.x,point.y);sampleTime=android.os.SystemClock.uptimeMillis()
         val points=mutableListOf(PointF(point.x,point.y));if(tool!="Pen")points.add(PointF(point.x,point.y))
         draft=VectorObject(document.nextId(),tool,points,ink,if(tool in listOf("Rectangle","Ellipse"))fillColor else null,strokeWidth)
@@ -231,6 +232,7 @@ internal class VectorCanvas(private val activity:MainActivity,val document:Vecto
         before=null;draft=null;pointer=-1;mode="";invalidate();onSelection()
     }
     override fun onTouchEvent(e:MotionEvent):Boolean {
+        if(guides.touch(e,pagePoint(e.x,e.y),document.width.toFloat(),document.height.toFloat(),32*density/zoom)){invalidate();return true}
         val tappedFingers=historyTap.observe(e)
         parent.requestDisallowInterceptTouchEvent(true)
         val hasPen=(0 until e.pointerCount).any{e.getToolType(it) in listOf(MotionEvent.TOOL_TYPE_STYLUS,MotionEvent.TOOL_TYPE_ERASER)}

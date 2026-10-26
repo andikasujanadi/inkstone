@@ -2,6 +2,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::sync::Arc;
 mod transform;
+mod groups;
+mod liquify;
+use groups::LayerGroup;
 mod selection;
 mod gpu;
 mod psd;
@@ -15,6 +18,9 @@ const HISTORY_BUDGET: usize = 96 * 1024 * 1024;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Layer {
+    #[serde(default)] pub group_id:Option<u32>,
+    #[serde(default="default_true")] pub group_visible:bool,
+    #[serde(default)] pub group_locked:bool,
     pub id: u32,
     pub name: String,
     pub visible: bool,
@@ -30,6 +36,7 @@ pub struct Layer {
 
 #[derive(Clone, Serialize, Deserialize)]
 struct State {
+    #[serde(default)] groups:Vec<LayerGroup>,
     layers: Vec<Layer>,
     active: usize,
     background: u32,
@@ -90,7 +97,7 @@ fn dab_spacing(brush: Brush) -> f32 {
 
 #[derive(Clone,Copy)]
 struct RecordedStamp {sample:Sample,brush:Brush,distance:f32}
-struct Stroke { mask_before:Option<Arc<Vec<u8>>>, rect: [usize; 4], before: Vec<u32>, layer: usize, last: Sample, filtered: Sample, brush: Brush, seed: u32, smudge: Option<Vec<u32>>, pending: Vec<gpu::Dab>, gpu_paint: bool, distance_to_dab: f32, distance:f32, stamp_distance:f32,records:Vec<RecordedStamp>, replay_end:Option<f32> }
+struct Stroke { mask_before:Option<Arc<Vec<u8>>>, rect: [usize; 4], before: Vec<u32>, layer: usize, last: Sample, filtered: Sample, brush: Brush, seed: u32, smudge: Option<Vec<u32>>, pending: Vec<gpu::Dab>, gpu_paint: bool, distance_to_dab: f32, distance:f32, stamp_distance:f32,records:Vec<RecordedStamp>, replay_end:Option<f32>, input_time:Option<f32>, input_position:(f32,f32), speed:f32, moving:bool }
 
 pub struct Engine {
     gpu: Option<gpu::Gpu>,
@@ -108,8 +115,10 @@ pub struct Engine {
     history_directory: std::path::PathBuf,
     history_error: Option<String>,
     undo: Vec<Change>,
+    undo_names:Vec<String>,redo_names:Vec<String>,action_name:String,history_notice:String,
     redo: Vec<Change>,
     stroke: Option<Stroke>,
+    liquify:Option<liquify::Liquify>,
     flood_preview: Option<(usize, Arc<Vec<u32>>)>,
     selection: Option<Vec<bool>>,
     selection_alpha:Option<Vec<u8>>,
@@ -165,17 +174,18 @@ impl Engine {
             return Err("Canvas must be at least 16 × 16 and at most 16 megapixels".into());
         }
         let empty_pixels = Arc::new(vec![0; pixels]);
-        Ok(Self { gpu: None, renderer_requested: "cpu".into(), renderer_error: None, width, height, dpi:300, state: State { layers: vec![Layer {
+        Ok(Self { gpu: None, renderer_requested: "cpu".into(), renderer_error: None, width, height, dpi:300, state: State { groups:vec![],layers: vec![Layer {group_id:None,group_visible:true,group_locked:false,
             id: 1, name: "Layer 1".into(), visible: true, opacity: 1.0, blend: "Normal".into(),
             alpha_lock: false, locked:false, clipping: false, mask:None,mask_enabled:true,pixels: empty_pixels.clone(),
         }], active: 0, background: 0xfffaf9f6, background_visible: true }, next_id: 2,mask_edit:false,symmetry:"Off".into(),
-            empty_pixels,input_error:None,history_directory:std::env::temp_dir(),history_error:None,undo: vec![], redo: vec![], stroke: None, flood_preview: None, selection: None,selection_alpha:None,selection_base:None,selection_version:0,saved_selections:std::collections::BTreeMap::new(),clipboard:None, dirty: true, damage: None })
+            empty_pixels,input_error:None,history_directory:std::env::temp_dir(),history_error:None,undo: vec![], redo: vec![],undo_names:vec![],redo_names:vec![],action_name:"Edit artwork".into(),history_notice:String::new(), stroke: None,liquify:None, flood_preview: None, selection: None,selection_alpha:None,selection_base:None,selection_version:0,saved_selections:std::collections::BTreeMap::new(),clipboard:None, dirty: true, damage: None })
     }
 
     fn record(&mut self, change: Change) {
-        self.redo.clear();
+        self.redo.clear();self.redo_names.clear();
+        self.undo_names.push(self.action_name.clone());
         self.undo.push(change);
-        if self.undo.len() > 64 { self.undo.remove(0); }
+        if self.undo.len() > 64 { self.undo.remove(0);self.undo_names.remove(0); }
         self.compact_history_to(HISTORY_BUDGET);
         self.dirty = true;
     }
@@ -259,14 +269,16 @@ impl Engine {
     fn history_step(&mut self,forward:bool)->bool {
         self.end();self.history_error=None;
         let item=if forward{self.redo.pop()}else{self.undo.pop()};
-        let Some(change)=item else{return false;};
+        let Some(change)=item else{self.history_notice=if forward{"Nothing to redo"}else{"Nothing to undo"}.into();return false;};
         let loaded=match &change {Change::Archived(entry)=>Some(entry.read()),_=>None};
         if let Some(Err(error))=&loaded {
             self.history_error=Some(format!("Could not read undo history: {error}"));
             if forward{self.redo.push(change);}else{self.undo.push(change);}return false;
         }
         self.apply_change(loaded.as_ref().map(|r|r.as_ref().unwrap()).unwrap_or(&change),forward);
-        if forward{self.undo.push(change);}else{self.redo.push(change);}true
+        let name=if forward{self.redo_names.pop()}else{self.undo_names.pop()}.unwrap_or_else(||"Edit artwork".into());
+        self.history_notice=format!("{}: {}",if forward{"Redo"}else{"Undo"},name);
+        if forward{self.undo.push(change);self.undo_names.push(name);}else{self.redo.push(change);self.redo_names.push(name);}true
     }
     pub fn undo(&mut self)->bool {self.history_step(false)}
     pub fn redo(&mut self)->bool {self.history_step(true)}
@@ -294,16 +306,38 @@ impl Engine {
         self.end();self.cancel_flood();
         self.input_error=None;
         if let Err(error)=self.ensure_edit_capacity(){self.input_error=Some(error);return;}
-        if self.state.layers[self.state.active].locked { return; }
+        if self.state.layers[self.state.active].is_locked() { return; }
         if !p.x.is_finite() || !p.y.is_finite() { return; }
+        self.action_name=if brush.kind>=128 || brush.kind==6{"Smudge stroke"}else if brush.kind>=64{"Erase stroke"}else{"Brush stroke"}.into();
         brush=Self::normalize_brush(brush);
         let mask_before=if self.mask_edit {self.state.layers[self.state.active].mask.clone()}else{None};
         if mask_before.is_some() && (brush.kind==6 || brush.kind>=128){return;}
         let mut stroke = Stroke {mask_before:mask_before.clone(), rect: [self.width,self.height,0,0], before: if mask_before.is_some(){Vec::new()}else{self.state.layers[self.state.active].pixels.as_ref().clone()},
-            layer: self.state.active, last: p, filtered: p, brush, seed: 0x736561, smudge: None, pending: Vec::new(), gpu_paint: brush.size>=32.0 && mask_before.is_none(), distance_to_dab: dab_spacing(brush), distance:0.0,stamp_distance:0.0,records:vec![],replay_end:None };
+            layer: self.state.active, last: p, filtered: p, brush, seed: 0x736561, smudge: None, pending: Vec::new(), gpu_paint: brush.size>=32.0 && mask_before.is_none(), distance_to_dab: dab_spacing(brush), distance:0.0,stamp_distance:0.0,records:vec![],replay_end:None,input_time:None,input_position:(p.x,p.y),speed:0.0,moving:false };
         if stroke.gpu_paint { if let Some(gpu)=&mut self.gpu { gpu.selection(self.selection.as_deref(),self.selection_alpha.as_deref()); } }
-        self.stamp(p, &mut stroke);
+        if brush.fade_length==0.0{self.stamp(p, &mut stroke);}
         self.stroke = Some(stroke);
+    }
+
+    pub fn set_sample_time(&mut self,time:f32){
+        if time.is_finite(){if let Some(s)=self.stroke.as_mut(){s.input_time=Some(time);}}
+    }
+    pub fn sample_timed(&mut self,p:Sample,time:f32){
+        if !p.x.is_finite() || !p.y.is_finite(){return;}
+        if let Some(s)=self.stroke.as_mut(){
+            if time.is_finite(){
+                if let Some(previous)=s.input_time{
+                    let dt=time-previous;
+                    if dt>0.0{
+                        let velocity=(p.x-s.input_position.0).hypot(p.y-s.input_position.1)/dt;
+                        let response=1.0-(-dt/24.0).exp();
+                        if s.records.is_empty() && velocity>0.0001{s.speed=velocity;}else{s.speed+=(velocity-s.speed)*response;}
+                    }
+                }
+                s.input_time=Some(time);s.input_position=(p.x,p.y);
+            }
+        }
+        self.sample(p);
     }
 
     pub fn sample(&mut self, mut p: Sample) {
@@ -315,6 +349,8 @@ impl Engine {
             stroke.filtered = p;
             let a = stroke.last;
             let distance = (p.x - a.x).hypot(p.y - a.y);
+            if distance>0.0001{stroke.moving=true;}
+            if stroke.records.is_empty() && distance>0.0001{self.stamp(a,&mut stroke);}
             // Preserve spacing across input batches: stationary/high-frequency events add no ink.
             let spacing = dab_spacing(stroke.brush);
             let mut travel = stroke.distance_to_dab;
@@ -334,6 +370,13 @@ impl Engine {
     }
 
     fn stamp(&mut self,p:Sample,stroke:&mut Stroke){
+        let original=stroke.brush;
+        if stroke.replay_end.is_none() && original.fade_length>0.0 && stroke.input_time.is_some(){
+            let fast=(stroke.speed/(original.size.max(1.0)*0.035)).clamp(0.0,2.0)/2.0;
+            let coverage=0.995-0.60*fast;
+            stroke.brush.opacity*=coverage;
+            stroke.brush.fade_length*=0.65+1.35*fast;
+        }
         if stroke.replay_end.is_none(){stroke.records.push(RecordedStamp{sample:p,brush:stroke.brush,distance:stroke.stamp_distance});}
         let mut points=vec![p];
         if stroke.brush.kind<128 && stroke.brush.kind!=6 {
@@ -347,6 +390,7 @@ impl Engine {
             }
         }
         for (i,point) in points.iter().enumerate(){if points[..i].iter().any(|q|(q.x-point.x).abs()<0.001 && (q.y-point.y).abs()<0.001){continue;}self.stamp_one(*point,stroke);}
+        stroke.brush=original;
     }
     fn stamp_one(&mut self, p: Sample, stroke: &mut Stroke) {
         if stroke.pending.len() >= gpu::MAX_DABS { self.flush_stroke(stroke); }
@@ -356,9 +400,15 @@ impl Engine {
                 let fade=((end-stroke.stamp_distance)/brush.fade_length.min(end.max(0.01))).clamp(0.0,1.0);
                 if fade<=0.0{return;}
                 // Compensate overlapping dabs so opacity, rather than width, fades at the tail.
-                brush.opacity*=1.0-(1.0-fade).powf(dab_spacing(brush)/brush.size.max(1.0));
+                if stroke.input_time.is_some(){brush.opacity*=fade;}else{brush.opacity*=1.0-(1.0-fade).powf(dab_spacing(brush)/brush.size.max(1.0));}
             }
         }
+        if brush.fade_length>0.0 && stroke.input_time.is_some() && stroke.moving{
+            let lead_length=stroke.replay_end.map_or(brush.size*0.75,|end|(brush.size*0.75).min(end*0.2)).max(1.0);
+            let t=(stroke.stamp_distance/lead_length).clamp(0.0,1.0);
+            brush.opacity*=0.08+0.92*t*t*(3.0-2.0*t);
+        }
+        if brush.fade_length>0.0 && stroke.input_time.is_some(){brush.opacity=1.0-(1.0-brush.opacity.clamp(0.0,1.0)).powf(dab_spacing(brush)/brush.size.max(1.0));}
         let pressure = finite(p.pressure, 1.0).clamp(0.0, 1.0).powf(0.7);
         let mut radius = brush.size * 0.5 * (1.0 - brush.pressure_size + brush.pressure_size * pressure).max(0.08);
         if matches!(brush_shape(brush.kind), 1 | 3) { radius *= 1.0 + finite(p.tilt, 0.0).clamp(0.0, 1.57) * 0.7; }
@@ -370,7 +420,7 @@ impl Engine {
             let smudging=brush.kind==6 || brush.kind>=128;
             let initial=smudging && stroke.smudge.is_none();
             if initial { stroke.smudge=Some(Vec::new()); }
-            stroke.pending.push(gpu::Dab { sample:p, distance:stroke.stamp_distance, params:gpu::Params {
+            stroke.pending.push(gpu::Dab { brush:stroke.brush, sample:p, distance:stroke.stamp_distance, params:gpu::Params {
                 meta:[self.width as u32,self.height as u32,brush.kind as u32,self.state.layers[stroke.layer].alpha_lock as u32],
                 rect:[x0 as u32,y0 as u32,x1 as u32,y1 as u32],
                 dab:[p.x,p.y,radius,brush.opacity*brush.flow*(1.0-brush.pressure_opacity+brush.pressure_opacity*pressure)],
@@ -511,7 +561,9 @@ impl Engine {
                 self.gpu=None;self.renderer_error=Some(e);stroke.seed=pending[0].params.flags[1];
                 if pending[0].params.flags[3]!=0 {stroke.smudge=None;}
                 let distance=stroke.stamp_distance;
-                for dab in pending {stroke.stamp_distance=dab.distance;self.stamp_one(dab.sample,stroke);}
+                let brush=stroke.brush;
+                for dab in pending {stroke.brush=dab.brush;stroke.stamp_distance=dab.distance;self.stamp_one(dab.sample,stroke);}
+                stroke.brush=brush;
                 stroke.stamp_distance=distance;
             }
         }
@@ -519,6 +571,7 @@ impl Engine {
     pub fn end(&mut self) {
         self.flush_gpu();
         if let Some(mut s) = self.stroke.take() {
+            if s.records.is_empty(){self.stamp(s.last,&mut s);self.flush_stroke(&mut s);}
             if s.distance>0.01 && s.records.iter().any(|r|r.brush.fade_length>0.0) {
                 if let Some(mask)=&s.mask_before{self.state.layers[s.layer].mask=Some(mask.clone());}
                 else{self.state.layers[s.layer].pixels=Arc::new(s.before.clone());}
@@ -531,6 +584,7 @@ impl Engine {
                 self.flush_stroke(&mut s);
                 if s.rect[0]<s.rect[2] && s.rect[1]<s.rect[3]{let damage=self.damage.get_or_insert(s.rect);for i in 0..2{damage[i]=damage[i].min(s.rect[i]);damage[i+2]=damage[i+2].max(s.rect[i+2]);}}
             }
+            self.action_name=if s.brush.kind>=128 || s.brush.kind==6{"Smudge stroke"}else if s.brush.kind>=64{"Erase stroke"}else{"Brush stroke"}.into();
             // Recording undo changes no pixels; keep the pending stroke damage intact.
             let was_dirty = self.dirty;
             if let Some(before)=s.mask_before{
@@ -560,8 +614,8 @@ impl Engine {
         let mut c = if background && self.state.background_visible { self.state.background } else { 0 };
         let mut base_alpha = 0.0;
         for l in layers {
-            if !l.clipping { base_alpha = if l.visible { channel(l.pixels[idx], 24)*l.mask_coverage(idx) } else { 0.0 }; }
-            if !l.visible { continue; }
+            if !l.clipping { base_alpha = if l.is_visible() { channel(l.pixels[idx], 24)*l.mask_coverage(idx) } else { 0.0 }; }
+            if !l.is_visible() { continue; }
             let opacity = l.opacity * l.mask_coverage(idx) * if l.clipping { base_alpha } else { 1.0 };
             c = composite(c, l.pixels[idx], opacity, &l.blend);
         }
@@ -614,11 +668,11 @@ impl Engine {
             "gpuComposites":self.gpu.as_ref().map_or(0,|g|g.composites),
             "gpuBatches":self.gpu.as_ref().map_or(0,|g|g.batches),"gpuDabs":self.gpu.as_ref().map_or(0,|g|g.dabs),
             "width":self.width,"height":self.height,"active":self.state.active,"maskEditing":self.mask_edit && self.state.layers[self.state.active].mask.is_some(),"symmetry":self.symmetry,
-            "inputError":self.input_error,"dpi":self.dpi,"undo":self.undo.len(),"redo":self.redo.len(),"background":self.state.background,
+            "historyNotice":self.history_notice,"undoAction":self.undo_names.last(),"redoAction":self.redo_names.last(),"inputError":self.input_error,"dpi":self.dpi,"undo":self.undo.len(),"redo":self.redo.len(),"background":self.state.background,
             "backgroundVisible":self.state.background_visible,"selection":self.selection.is_some(),"selectionVersion":self.selection_version,"savedSelections":self.saved_selections.keys().collect::<Vec<_>>(),"clipboard":self.clipboard.is_some(),
-            "layers":self.state.layers.iter().map(|l| json!({"id":l.id,"name":l.name,
-                "visible":l.visible,"opacity":l.opacity,"blend":l.blend,
-                "locked":l.locked,"alphaLock":l.alpha_lock,"clipping":l.clipping,"hasMask":l.mask.is_some(),"maskEnabled":l.mask_enabled})).collect::<Vec<_>>()})
+            "groups":self.state.groups,"layers":self.state.layers.iter().map(|l| json!({"id":l.id,"name":l.name,
+                "groupId":l.group_id,"ownVisible":l.visible,"ownLocked":l.locked,"visible":l.is_visible(),"opacity":l.opacity,"blend":l.blend,
+                "locked":l.is_locked(),"alphaLock":l.alpha_lock,"clipping":l.clipping,"hasMask":l.mask.is_some(),"maskEnabled":l.mask_enabled})).collect::<Vec<_>>()})
     }
 
     fn layer_bytes(layers:&[Layer])->usize {
@@ -639,19 +693,28 @@ impl Engine {
 
     pub fn command(&mut self, v: &Value) -> Result<Value, String> {
         let op = v["op"].as_str().ok_or("Missing operation")?;
+        if !op.starts_with("liquify") && !matches!(op,"info"|"pick"|"selectionPreview"){self.finish_liquify(false);}
         if !matches!(op,"info"|"pick"|"selectionPreview"){self.end();}else if op=="pick"{self.flush_gpu();}
         if self.flood_preview.is_some() && !matches!(op,"floodPreview"|"floodCommit"|"floodCancel"|"info"|"pick"|"selectionPreview") {
             self.cancel_flood();
         }
         let index = v["index"].as_u64().unwrap_or(self.state.active as u64) as usize;
         let n = |key: &str, default: f32| finite(v[key].as_f64().unwrap_or(default as f64) as f32, default);
-        if self.state.layers[self.state.active].locked && matches!(op,"clear"|"fill"|"flood"|"floodPreview"|"adjust"|"transform"|"transformMatrix"|"transformProjective"|"transformMesh"|"selectionClear"|"selectionFill"|"selectionCut"|"delete"|"merge") {
+        if self.state.layers[self.state.active].is_locked() && matches!(op,"clear"|"fill"|"flood"|"floodPreview"|"adjust"|"transform"|"transformMatrix"|"transformProjective"|"transformMesh"|"selectionClear"|"selectionFill"|"selectionCut"|"delete"|"merge") {
             return Err("This layer is locked. Swipe left and choose Unlock to edit it.".into());
         }
-        if op=="merge" && self.state.active>0 && self.state.layers[self.state.active-1].locked {return Err("The layer below is locked".into());}
+        if op=="merge" && self.state.active>0 && self.state.layers[self.state.active-1].is_locked() {return Err("The layer below is locked".into());}
         if self.mask_edit && self.state.layers[self.state.active].mask.is_some() && matches!(op,"flood"|"floodPreview"|"adjust"|"transform"|"transformMatrix"|"transformProjective"|"transformMesh"|"selectionClear"|"selectionFill"|"selectionCut"){return Err("Select Layer pixels before using fill, adjustments or Transform".into());}
         if matches!(op,"fill"|"flood"|"floodPreview"|"adjust"|"transform"|"transformMatrix"|"transformProjective"|"transformMesh"){self.ensure_edit_capacity()?;}
+        self.action_name=match op{
+            "add"=>"Create layer","duplicate"=>"Duplicate layer","delete"=>"Delete layer","merge"=>"Merge layers","layer"=>"Change layer settings","reorder"|"moveLayer"=>"Move layer",
+            "flood"|"floodCommit"=>"ColorDrop","fill"=>"Fill layer","clear"=>"Clear layer","background"=>"Change background","adjust"=>"Image adjustment",
+            "transform"|"transformMatrix"|"transformProjective"|"transformMesh"=>"Transform","mask"=>"Edit layer mask","group"=>"Edit layer group",
+            "selectionFill"=>"Fill selection","selectionClear"=>"Clear selection","selectionCut"=>"Cut selection","selectionPaste"|"selectionCopyPaste"=>"Paste selection","liquifyCommit"=>"Liquify",_=>"Edit artwork"
+        }.into();
+        if op.starts_with("liquify"){self.liquify_command(v)?;return Ok(self.info());}
         if op.starts_with("selection"){return self.selection_command(v);}
+        if op=="group"{return self.group_command(v);}
         match op {
             "setup" => {
                 if !self.undo.is_empty() || self.state.layers.len()!=1 {return Err("Canvas setup is only available on a new canvas".into());}
@@ -665,6 +728,8 @@ impl Engine {
             "historyDirectory" => {let path=v["path"].as_str().ok_or("Missing history directory")?;std::fs::create_dir_all(path).map_err(|e|e.to_string())?;self.history_directory=path.into();},
             "undo" => { self.undo();if let Some(error)=self.history_error.take(){return Err(error);} }, "redo" => { self.redo();if let Some(error)=self.history_error.take(){return Err(error);} },
             "active" => { if index < self.state.layers.len() {if index!=self.state.active{self.mask_edit=false;} self.state.active = index; } },
+            "nameLastUndo"=>{if let Some(name)=self.undo_names.last_mut(){*name=v["name"].as_str().unwrap_or("Shape").chars().take(100).collect();}},
+            "moveLayer"=>self.move_layer(v)?,
             "mask"=>self.mask_command(v)?,
             "symmetry"=>{let mode=v["mode"].as_str().unwrap_or("Off");if !matches!(mode,"Off"|"Vertical"|"Horizontal"|"Quadrant"|"Radial 4"){return Err("Unsupported symmetry mode".into());}self.symmetry=mode.into();},
             "add" | "duplicate" => {
@@ -674,7 +739,7 @@ impl Engine {
                     let id = e.next_id; e.next_id += 1;
                     let l = if op == "duplicate" {
                         let mut l = e.state.layers[e.state.active].clone(); l.id = id; l.name += " copy"; l
-                    } else { Layer { id, name: format!("Layer {}", id), visible:true, opacity:1.0,
+                    } else { Layer { group_id:e.state.layers[e.state.active].group_id,group_visible:e.state.layers[e.state.active].group_visible,group_locked:e.state.layers[e.state.active].group_locked,id, name: format!("Layer {}", id), visible:true, opacity:1.0,
                         blend:"Normal".into(), alpha_lock:false, locked:false, clipping:false,
                         mask:None,mask_enabled:true,pixels:e.empty_pixels.clone() } };
                     e.state.active += 1; e.state.layers.insert(e.state.active, l);
@@ -701,6 +766,7 @@ impl Engine {
             "reorder" => {
                 let to = v["to"].as_u64().unwrap_or(index as u64) as usize;
                 if index < self.state.layers.len() && to < self.state.layers.len() {
+                    if self.state.layers[index].group_id!=self.state.layers[to].group_id{return Err("Move layers between folders with Layer group".into());}
                     self.structure(|e| { let l = e.state.layers.remove(index); e.state.layers.insert(to, l); e.state.active = to;
                         e.state.layers[0].clipping = false; });
                 }
@@ -931,16 +997,16 @@ impl Engine {
 
     pub fn save(&mut self)->Result<Vec<u8>,String> {
         self.flush_gpu();
-        let doc=SavedDocument {selections:self.saved_selections.clone(),version:if self.state.layers.iter().any(|l|l.mask.is_some()){2}else{1},width:self.width,height:self.height,active:self.state.active,
+        let doc=SavedDocument {groups:self.state.groups.clone(),selections:self.saved_selections.clone(),version:if !self.state.groups.is_empty(){3}else if self.state.layers.iter().any(|l|l.mask.is_some()){2}else{1},width:self.width,height:self.height,active:self.state.active,
             dpi:self.dpi,background:self.state.background,background_visible:self.state.background_visible,
-            layers:self.state.layers.iter().map(|l| SavedLayer {id:l.id,name:l.name.clone(),visible:l.visible,
+            layers:self.state.layers.iter().map(|l| SavedLayer {group_id:l.group_id,id:l.id,name:l.name.clone(),visible:l.visible,
                 opacity:l.opacity,blend:l.blend.clone(),alpha_lock:l.alpha_lock,locked:l.locked,clipping:l.clipping,mask_enabled:l.mask_enabled,mask:l.mask.as_ref().map(|m|encode_mask_runs(m)),runs:if Arc::ptr_eq(&l.pixels,&self.empty_pixels) && self.flood_preview.is_none(){vec![((self.width*self.height) as u32,0)]}else{encode_runs(if let Some((index,before))=&self.flood_preview {if self.state.layers[*index].id==l.id {before}else{&l.pixels}}else{&l.pixels})}}).collect()};
         serde_json::to_vec(&doc).map_err(|e|e.to_string())
     }
     pub fn load(bytes:&[u8])->Result<Self,String> {
         if bytes.len()>128*1024*1024 {return Err("Document is too large".into());}
         let doc:SavedDocument=serde_json::from_slice(bytes).map_err(|_|"This is not a supported Inkstone document")?;
-        if !matches!(doc.version,1|2) {return Err("Unsupported document version".into());}
+        if !matches!(doc.version,1|2|3) {return Err("Unsupported document version".into());}
         let mut e=Self::new(doc.width,doc.height)?;
         if doc.layers.is_empty() || doc.active>=doc.layers.len() {return Err("Invalid layer count".into());}
         let mut layers=vec![]; let mut ids=std::collections::HashSet::new();
@@ -955,7 +1021,7 @@ impl Engine {
                 let pixels=Arc::new(decode_runs(&l.runs,doc.width*doc.height)?);
                 pixel_cache.insert(l.runs.clone(),pixels.clone());pixels
             };
-            layers.push(Layer{id:l.id,name:l.name.chars().take(100).collect(),visible:l.visible,opacity:l.opacity.clamp(0.0,1.0),
+            layers.push(Layer{group_id:l.group_id,group_visible:true,group_locked:false,id:l.id,name:l.name.chars().take(100).collect(),visible:l.visible,opacity:l.opacity.clamp(0.0,1.0),
                 blend:l.blend,alpha_lock:l.alpha_lock,locked:l.locked,clipping:l.clipping,mask_enabled:l.mask_enabled,mask:match l.mask{Some(runs)=>{let values=decode_runs(&runs,doc.width*doc.height)?;if values.iter().any(|n|*n>255){return Err("Invalid layer mask".into());}Some(Arc::new(values.into_iter().map(|n|n as u8).collect()))},None=>None},pixels});
         }
         if Self::layer_bytes(&layers)>PIXEL_BUDGET*4{return Err("Document masks exceed the layer memory budget".into());}
@@ -964,7 +1030,10 @@ impl Engine {
         e.saved_selections=doc.selections;
         e.dpi=doc.dpi.clamp(1,2400);
         e.next_id=layers.iter().map(|l|l.id).max().unwrap()+1;
-        e.state=State{layers,active:doc.active,background:doc.background,background_visible:doc.background_visible};
+        let mut group_ids=std::collections::HashSet::new();
+        if doc.groups.len()>512 || doc.groups.iter().any(|g|g.id==0 || !group_ids.insert(g.id) || g.name.len()>400){return Err("Invalid layer groups".into());}
+        e.state=State{groups:doc.groups,layers,active:doc.active,background:doc.background,background_visible:doc.background_visible};
+        e.refresh_groups();
         Ok(e)
     }
 }
@@ -1009,10 +1078,10 @@ fn blur(pixels:&mut [u32],w:usize,h:usize,r:usize) {
 }
 fn default_dpi()->u32{300}
 #[derive(Serialize,Deserialize)]
-struct SavedDocument {#[serde(default,skip_serializing_if="std::collections::BTreeMap::is_empty")]selections:std::collections::BTreeMap<String,Vec<(u32,u32)>>,#[serde(default="default_dpi")]dpi:u32,version:u32,width:usize,height:usize,active:usize,background:u32,background_visible:bool,layers:Vec<SavedLayer>}
+struct SavedDocument {#[serde(default,skip_serializing_if="Vec::is_empty")]groups:Vec<LayerGroup>,#[serde(default,skip_serializing_if="std::collections::BTreeMap::is_empty")]selections:std::collections::BTreeMap<String,Vec<(u32,u32)>>,#[serde(default="default_dpi")]dpi:u32,version:u32,width:usize,height:usize,active:usize,background:u32,background_visible:bool,layers:Vec<SavedLayer>}
 fn default_true()->bool{true}
 #[derive(Serialize,Deserialize)]
-struct SavedLayer {#[serde(default)]mask:Option<Vec<(u32,u32)>>,#[serde(default="default_true")]mask_enabled:bool,#[serde(default)]locked:bool,id:u32,name:String,visible:bool,opacity:f32,blend:String,alpha_lock:bool,clipping:bool,runs:Vec<(u32,u32)>}
+struct SavedLayer {#[serde(default,skip_serializing_if="Option::is_none")]group_id:Option<u32>,#[serde(default)]mask:Option<Vec<(u32,u32)>>,#[serde(default="default_true")]mask_enabled:bool,#[serde(default)]locked:bool,id:u32,name:String,visible:bool,opacity:f32,blend:String,alpha_lock:bool,clipping:bool,runs:Vec<(u32,u32)>}
 fn encode_mask_runs(values:&[u8])->Vec<(u32,u32)>{let mut out=vec![];for &v in values{let c=v as u32;if let Some((n,p))=out.last_mut(){if *p==c{*n+=1;continue;}}out.push((1,c));}out}
 fn encode_runs(pixels:&[u32])->Vec<(u32,u32)> {
     let mut runs=vec![];for &p in pixels {if let Some((n,c))=runs.last_mut() {if *c==p {*n+=1;continue;}}runs.push((1,p));}runs

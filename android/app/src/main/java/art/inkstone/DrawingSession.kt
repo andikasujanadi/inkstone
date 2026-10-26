@@ -79,13 +79,14 @@ class DrawingSession(width: Int, height: Int) : Closeable {
     @Volatile private var dropActive=false
     @Volatile internal var transformInteracting=false
     @Volatile internal var transformEditing=false
-    val isStrokeActive get()=penActive||dropActive||transformInteracting||transformEditing
+    @Volatile internal var liquifyEditing=false
+    val isStrokeActive get()=penActive||dropActive||transformInteracting||transformEditing||liquifyEditing
     internal var beforeCommand:(String)->Unit={}
     internal var beforeSnapshot:()->Unit={}
     internal var onToolChange:()->Unit={}
     private val dropGeneration=AtomicLong(0)
     private val inputLock=Any()
-    private data class StrokeSettings(val kind:Int,val color:Int,val size:Float,val opacity:Float,val flow:Float,val smooth:Float,val pressureSize:Float,val pressureOpacity:Float,val fadeLength:Float)
+    private data class StrokeSettings(val kind:Int,val color:Int,val size:Float,val opacity:Float,val flow:Float,val smooth:Float,val pressureSize:Float,val pressureOpacity:Float,val fadeLength:Float,val sampleStride:Int=4)
     private class MoveBatch(val settings:StrokeSettings,val chunks:MutableList<FloatArray>,var size:Int)
     private var pendingMoves:MoveBatch?=null
     private val main = Handler(Looper.getMainLooper())
@@ -101,6 +102,7 @@ class DrawingSession(width: Int, height: Int) : Closeable {
     var onFrame: () -> Unit = {}
     var onInfo: () -> Unit = {}
     var onError: (String) -> Unit = {}
+    var onHistoryNotice:(String)->Unit={}
     var layerThumbnails: List<Bitmap> = emptyList(); private set
     val canvasWidth get() = info.getInt("width")
     val canvasHeight get() = info.getInt("height")
@@ -176,11 +178,13 @@ class DrawingSession(width: Int, height: Int) : Closeable {
     var rapidUndoDelay=.47f
     var selectionVisibility=.3f
 
+    var onBrushChosen: (String,BrushPreset)->Unit = {_,_->}
     fun choose(p: BrushPreset) {
         preset = p; size = p.size; flow = p.flow; pressureSize = p.pressureSize; pressureOpacity = p.pressureOpacity;fadeLength=p.fadeLength
+        onBrushChosen(tool,p)
     }
 
-    fun stroke(phase: Int, samples: FloatArray, eraser: Boolean = false) {
+    fun stroke(phase: Int, input: FloatArray, eraser: Boolean = false, times:FloatArray?=null) {
         if (closed) return
         if(info.optBoolean("maskEditing") && tool=="Smudge"){if(phase==0)onError("Use Paint or Erase to edit a layer mask");return}
         if(phase==0)penActive=true
@@ -190,7 +194,9 @@ class DrawingSession(width: Int, height: Int) : Closeable {
         val kind=if(erasing)64+brush.preset.kind else if(tool=="Smudge")128+brush.preset.kind else brush.preset.kind
         // Erasing uses alpha coverage; the unused color carries edge hardness to both renderers.
         val ink=if(erasing)(eraserHardness.coerceIn(0f,1f)*255+.5f).toInt() else color
-        val settings=StrokeSettings(kind,ink,if(dynamicBrushScaling)brush.size else brush.size/viewZoom.coerceAtLeast(.02f),brush.opacity,brush.flow,stabilization,if(pressureEnabled)brush.pressureSize else 0f,if(pressureEnabled)brush.pressureOpacity else 0f,brush.fadeLength)
+        val timed=times!=null && times.size==input.size/4
+        val samples=if(timed)FloatArray(input.size/4*5){i->if(i%5==4)times!![i/5] else input[i/5*4+i%5]}else input
+        val settings=StrokeSettings(kind,ink,if(dynamicBrushScaling)brush.size else brush.size/viewZoom.coerceAtLeast(.02f),brush.opacity,brush.flow,stabilization,if(pressureEnabled)brush.pressureSize else 0f,if(pressureEnabled)brush.pressureOpacity else 0f,brush.fadeLength,if(timed)5 else 4)
         synchronized(inputLock){
             if(phase==1){
                 val pending=pendingMoves
@@ -211,8 +217,11 @@ class DrawingSession(width: Int, height: Int) : Closeable {
             }
         }
     }
+    private var shapeStroke=false
     private fun sendStroke(phase:Int,samples:FloatArray,s:StrokeSettings){
-        NativeBridge.stroke(handle,phase,samples,s.kind,s.color,s.size,s.opacity,s.flow,s.smooth,s.pressureSize,s.pressureOpacity,s.fadeLength)
+        if(phase==0 || phase==3)shapeStroke=false
+        NativeBridge.stroke(handle,phase,samples,s.kind,s.color,s.size,s.opacity,s.flow,s.smooth,s.pressureSize,s.pressureOpacity,s.fadeLength,s.sampleStride)
+        if(phase==2 && shapeStroke){NativeBridge.command(handle,"{\"op\":\"nameLastUndo\",\"name\":\"Shape\"}");shapeStroke=false}
     }
 
     private var pendingShape:Pair<StrokeSettings,FloatArray>?=null
@@ -230,6 +239,7 @@ class DrawingSession(width: Int, height: Int) : Closeable {
                 if(!disposed && latest!=null){
                     val (s,points)=latest;sendStroke(3,floatArrayOf(),s);sendStroke(0,points.copyOfRange(0,4),s)
                     if(points.size>4)sendStroke(1,points.copyOfRange(4,points.size),s)
+                    shapeStroke=true
                     changed()
                 }
             }
@@ -271,10 +281,14 @@ class DrawingSession(width: Int, height: Int) : Closeable {
             if (result.has("error")) main.post { if (!closed) onError(result.getString("error")) }
             else if (result.has("layers")) info = result
             changed()
-            main.post { if (!closed) { onInfo(); then(result) } }
+            main.post { if (!closed) { onInfo();if(op in listOf("undo","redo") && !result.has("error"))onHistoryNotice(result.optString("historyNotice"));then(result) } }
         }
     }
 
+    internal fun previewLiquify(values:JSONObject){
+        if(closed)return;values.put("op","liquifyDab")
+        worker.execute{if(!disposed){val result=JSONObject(NativeBridge.command(handle,values.toString()));if(result.has("error"))main.post{if(!closed)onError(result.getString("error"))};changed()}}
+    }
     internal fun selectionPreview(then:(JSONObject)->Unit){
         if(closed)return
         worker.execute{if(disposed)return@execute;val value=JSONObject(NativeBridge.command(handle,"{\"op\":\"selectionPreview\"}"));main.post{if(!closed)then(value)}}

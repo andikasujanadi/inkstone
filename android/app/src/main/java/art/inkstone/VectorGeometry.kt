@@ -22,7 +22,7 @@ internal object VectorGeometry {
         .map{(i,a)->i to mapped(obj,a)}.filter{(_,a)->hypot(a.x-p.x,a.y-p.y)<=tolerance}
         .minByOrNull{(_,a)->hypot(a.x-p.x,a.y-p.y)}?.first
     fun hitAnchor(doc:VectorDocument,selectedId:Long?,p:PointF,tolerance:Float):Hit?{
-        val owners=doc.layers.asReversed().filter{it.visible && it.opacity>0}.flatMap{it.objects.asReversed()}
+        val owners=doc.layers.asReversed().filter{it.effectiveVisible && it.opacity>0}.flatMap{it.objects.asReversed()}
             .sortedBy{it.id!=selectedId}
         return owners.firstNotNullOfOrNull{obj->nearestAnchor(obj,p,tolerance)?.let{Hit(obj.id,it)}}
     }

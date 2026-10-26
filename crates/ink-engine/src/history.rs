@@ -8,7 +8,7 @@ impl Drop for Entry { fn drop(&mut self) { let _ = fs::remove_file(&self.path); 
 #[derive(Serialize,Deserialize)]
 struct StoredLayer { metadata:Layer, pixels:usize, mask:Option<usize> }
 #[derive(Serialize,Deserialize)]
-struct StoredState { layers:Vec<StoredLayer>, active:usize, background:u32, background_visible:bool }
+struct StoredState {groups:Vec<super::LayerGroup>, layers:Vec<StoredLayer>, active:usize, background:u32, background_visible:bool }
 #[derive(Serialize,Deserialize)]
 enum Header {
     Pixels {id:u32,rect:[usize;4]},
@@ -39,7 +39,7 @@ impl Entry {
         let mut zipped=flate2::write::GzEncoder::new(BufWriter::new(file),flate2::Compression::fast());
         let mut pixels:Vec<Arc<Vec<u32>>>=vec![];let mut masks:Vec<Arc<Vec<u8>>>=vec![];
         let mut pixel_ids=HashMap::new();let mut mask_ids=HashMap::new();
-        let mut state=|s:&State|StoredState{active:s.active,background:s.background,background_visible:s.background_visible,layers:s.layers.iter().map(|l|{
+        let mut state=|s:&State|StoredState{groups:s.groups.clone(),active:s.active,background:s.background,background_visible:s.background_visible,layers:s.layers.iter().map(|l|{
             let pixel=*pixel_ids.entry(Arc::as_ptr(&l.pixels)).or_insert_with(||{pixels.push(l.pixels.clone());pixels.len()-1});
             let mask=l.mask.as_ref().map(|m|*mask_ids.entry(Arc::as_ptr(m)).or_insert_with(||{masks.push(m.clone());masks.len()-1}));
             let mut metadata=l.clone();metadata.pixels=Arc::new(vec![]);metadata.mask=None;
@@ -77,7 +77,7 @@ impl Entry {
                 reader.read_exact(&mut count).map_err(|e|e.to_string())?;
                 let n=u64::from_le_bytes(count) as usize;if n>before.layers.len()+after.layers.len(){return Err("Invalid history masks".into());}
                 let mut masks=vec![];for _ in 0..n{masks.push(Arc::new(read_block(&mut reader,MAX_PIXELS)?));}
-                let restore=|s:StoredState|->Result<State,String>{Ok(State{active:s.active,background:s.background,background_visible:s.background_visible,layers:s.layers.into_iter().map(|l|{
+                let restore=|s:StoredState|->Result<State,String>{Ok(State{groups:s.groups,active:s.active,background:s.background,background_visible:s.background_visible,layers:s.layers.into_iter().map(|l|{
                     let mut layer=l.metadata;layer.pixels=pixels.get(l.pixels).ok_or("Missing history pixels")?.clone();
                     layer.mask=match l.mask{Some(i)=>Some(masks.get(i).ok_or("Missing history mask")?.clone()),None=>None};Ok(layer)
                 }).collect::<Result<Vec<_>,String>>()?})};

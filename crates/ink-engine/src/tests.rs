@@ -633,3 +633,101 @@ fn finishing_fade_refreshes_the_whole_live_tail_without_ghost_pixels(){
     let apply=|display:&mut Vec<i32>,patch:Vec<i32>|{let(x,y,w,h)=(patch[0] as usize,patch[1] as usize,patch[2] as usize,patch[3] as usize);for row in 0..h{display[(y+row)*320+x..(y+row)*320+x+w].copy_from_slice(&patch[4+row*w..4+(row+1)*w]);}};
     e.begin(Sample{x:20.,y:48.,pressure:1.,tilt:0.},Brush{size:28.,fade_length:100.,pressure_size:0.,stabilization:0.,..Brush::default()});e.sample(Sample{x:270.,y:48.,pressure:1.,tilt:0.});apply(&mut display,e.render_patch(false).unwrap());e.end();apply(&mut display,e.render_patch(false).unwrap());assert_eq!(display,&e.render_patch(true).unwrap()[4..]);
 }
+
+#[test]
+fn fade_speed_changes_opacity_and_tail_without_changing_radius(){
+    let draw=|dt:f32|{
+        let mut e=Engine::new(800,80).unwrap();
+        e.begin(Sample{x:20.,y:40.,pressure:1.,tilt:0.},Brush{size:28.,fade_length:150.,pressure_size:0.,stabilization:0.,..Brush::default()});e.set_sample_time(0.);
+        for i in 1..=150{e.sample_timed(Sample{x:20.+i as f32*5.,y:40.,pressure:1.,tilt:0.},i as f32*dt);}
+        let radius=e.stroke.as_ref().unwrap().brush.size;e.end();(e,radius)
+    };
+    let (slow,sr)=draw(35.);let (fast,fr)=draw(2.);
+    let alpha=|e:&Engine,x:usize|e.state.layers[0].pixels[40*800+x]>>24;
+    assert_eq!(sr,fr);assert!(alpha(&slow,300)>alpha(&fast,300)+40);
+    assert!(alpha(&slow,680)>alpha(&fast,680)+15);
+    assert!(fast.state.layers[0].pixels[50*800+300]>>24>0);
+    assert_eq!(slow.undo.len(),1);assert_eq!(fast.undo.len(),1);
+}
+
+#[test]
+fn groups_preserve_member_flags_save_history_and_translate_together(){
+    let mut e=Engine::new(64,64).unwrap();e.command(&json!({"op":"fill","color":0xffff0000u32})).unwrap();
+    e.command(&json!({"op":"group","action":"create","name":"Sketch"})).unwrap();
+    e.command(&json!({"op":"add"})).unwrap();assert_eq!(e.state.layers[1].group_id,Some(1));
+    e.command(&json!({"op":"group","action":"update","id":1,"visible":false,"locked":true})).unwrap();
+    assert_eq!(e.color_at(10,10,false),0);assert!(e.state.layers[0].visible);assert!(e.state.layers[1].is_locked());
+    assert!(e.command(&json!({"op":"fill","color":1})).is_err());
+    let mut loaded=Engine::load(&e.save().unwrap()).unwrap();assert_eq!(loaded.state.groups.len(),1);assert!(!loaded.state.layers[0].is_visible());
+    e.command(&json!({"op":"group","action":"update","id":1,"visible":true,"locked":false})).unwrap();
+    e.command(&json!({"op":"group","action":"translate","id":1,"x":8,"y":0})).unwrap();assert_eq!(e.color_at(0,20,false),0);assert_eq!(e.color_at(10,20,false),0xffff0000);
+    e.undo();assert_eq!(e.color_at(0,20,false),0xffff0000);e.redo();assert_eq!(e.color_at(0,20,false),0);
+    loaded.command(&json!({"op":"group","action":"ungroup","id":1})).unwrap();assert!(loaded.state.layers[0].is_visible());assert!(!loaded.state.layers[1].is_locked());
+}
+
+#[test]
+fn timed_fade_has_no_opaque_start_cap_and_keeps_taps(){
+    let mut e=Engine::new(800,80).unwrap();let brush=Brush{size:28.,fade_length:150.,pressure_size:0.,stabilization:0.,..Brush::default()};
+    e.begin(Sample{x:30.,y:40.,pressure:1.,tilt:0.},brush);e.set_sample_time(0.);
+    for i in 1..=140{e.sample_timed(Sample{x:30.+i as f32*5.,y:40.,pressure:1.,tilt:0.},i as f32*2.);}
+    e.end();let pixels=&e.state.layers[0].pixels;
+    assert!(pixels[40*800+30]>>24<150,"first stamp must not be an opaque circle");
+    assert!(pixels[40*800+30]>>24<=pixels[40*800+60]>>24);
+    e.begin(Sample{x:10.,y:10.,pressure:1.,tilt:0.},brush);e.set_sample_time(0.);e.end();assert!(e.state.layers[0].pixels[10*800+10]>>24>0);
+}
+
+#[test]
+fn layer_drag_moves_into_out_of_groups_reorders_and_undoes(){
+    let mut e=Engine::new(64,64).unwrap();e.command(&json!({"op":"group","action":"create","name":"Sketch"})).unwrap();e.command(&json!({"op":"add"})).unwrap();e.command(&json!({"op":"add"})).unwrap();
+    e.command(&json!({"op":"moveLayer","id":2,"groupId":null,"targetId":null})).unwrap();assert_eq!(e.state.layers[0].id,2);assert_eq!(e.state.layers[0].group_id,None);
+    e.command(&json!({"op":"moveLayer","id":2,"groupId":1,"targetId":1,"above":true})).unwrap();assert_eq!(e.state.layers.iter().map(|l|l.id).collect::<Vec<_>>(),vec![1,2,3]);
+    assert_eq!(e.state.layers[1].group_id,Some(1));assert_eq!(e.info()["undoAction"],"Move layer");
+    e.command(&json!({"op":"undo"})).unwrap();assert_eq!(e.info()["historyNotice"],"Undo: Move layer");assert_eq!(e.state.layers[0].group_id,None);
+    e.command(&json!({"op":"redo"})).unwrap();assert_eq!(e.info()["historyNotice"],"Redo: Move layer");assert_eq!(e.state.layers[1].group_id,Some(1));
+}
+
+#[test]
+fn undo_names_survive_history_archiving_and_redo_branching(){
+    let mut e=Engine::new(64,64).unwrap();e.command(&json!({"op":"fill","color":0xff123456u32})).unwrap();e.command(&json!({"op":"add"})).unwrap();e.compact_history_to(0);
+    assert!(e.undo.iter().any(|c|matches!(c,Change::Archived(_))));
+    e.command(&json!({"op":"undo"})).unwrap();assert_eq!(e.info()["historyNotice"],"Undo: Create layer");
+    e.command(&json!({"op":"undo"})).unwrap();assert_eq!(e.info()["historyNotice"],"Undo: Fill layer");e.command(&json!({"op":"redo"})).unwrap();assert_eq!(e.info()["historyNotice"],"Redo: Fill layer");
+    e.command(&json!({"op":"redo"})).unwrap();assert_eq!(e.info()["historyNotice"],"Redo: Create layer");
+    e.command(&json!({"op":"undo"})).unwrap();e.command(&json!({"op":"fill","color":0xffff0000u32})).unwrap();assert!(e.redo_names.is_empty());assert_eq!(e.info()["undoAction"],"Fill layer");
+}
+
+#[test]
+fn liquify_push_cancel_commit_restore_selection_and_history(){
+    let mut e=Engine::new(128,128).unwrap();
+    e.begin(Sample{x:64.,y:20.,pressure:1.,tilt:0.},Brush{size:10.,color:0xffff0000,pressure_size:0.,stabilization:0.,..Brush::default()});e.sample(Sample{x:64.,y:108.,pressure:1.,tilt:0.});e.end();let original=e.save().unwrap();
+    let begin=|e:&mut Engine|e.command(&json!({"op":"liquifyBegin"})).unwrap();
+    begin(&mut e);e.command(&json!({"op":"liquifyDab","mode":"Push","size":64,"strength":1.,"start":true,"points":[[64,64,1]]})).unwrap();e.command(&json!({"op":"liquifyDab","mode":"Push","size":64,"strength":1.,"end":true,"points":[[90,64,1]]})).unwrap();
+    assert_ne!(e.save().unwrap(),original);assert_eq!(e.undo.len(),1);e.command(&json!({"op":"liquifyCancel"})).unwrap();assert_eq!(e.save().unwrap(),original);
+    for mode in ["Push","Pinch","Expand","Twirl right","Twirl left"]{
+        begin(&mut e);e.command(&json!({"op":"liquifyDab","mode":mode,"size":80,"strength":1.,"start":true,"points":[[64,64,1]]})).unwrap();e.command(&json!({"op":"liquifyDab","mode":mode,"size":80,"strength":1.,"end":true,"points":[[90,64,1]]})).unwrap();e.command(&json!({"op":"liquifyCommit"})).unwrap();
+        assert_eq!(e.undo.len(),2);assert_eq!(e.info()["undoAction"],"Liquify");e.undo();assert_eq!(e.save().unwrap(),original);
+    }
+    let mut selection=vec![0u8;128*128];for y in 48..80{for x in 48..80{selection[y*128+x]=255;}}e.set_selection(Some(selection));begin(&mut e);
+    e.command(&json!({"op":"liquifyDab","mode":"Expand","size":100,"strength":1.,"points":[[64,64,1],[64,64,1],[64,64,1]]})).unwrap();
+    assert_eq!(e.color_at(64,25,false),0xffff0000);e.command(&json!({"op":"liquifyDab","mode":"Restore","size":600,"strength":1.,"points":[[64,64,1]]})).unwrap();e.command(&json!({"op":"liquifyCancel"})).unwrap();assert_eq!(e.save().unwrap(),original);
+}
+
+#[test]
+fn slow_fade_lead_in_has_no_local_cap_peak_and_keeps_short_marks(){
+    for dt in [10.,35.,100.] {
+        let mut e=Engine::new(800,100).unwrap();let b=Brush{size:40.,fade_length:150.,pressure_size:0.,stabilization:0.,..Brush::default()};
+        e.begin(Sample{x:60.,y:50.,pressure:1.,tilt:0.},b);e.set_sample_time(0.);
+        e.sample_timed(Sample{x:60.,y:50.,pressure:1.,tilt:0.},500.);
+        for i in 1..=120{e.sample_timed(Sample{x:60.+i as f32*5.,y:50.,pressure:1.,tilt:0.},500.+i as f32*dt);}
+        e.end();let a=|x:usize|e.state.layers[0].pixels[50*800+x]>>24;
+        assert!(a(60)<a(80),"slow stroke starts with a cap: {} vs {}",a(60),a(80));assert!(a(65)<a(90));
+        e.begin(Sample{x:20.,y:20.,pressure:1.,tilt:0.},b);e.set_sample_time(0.);e.sample_timed(Sample{x:26.,y:20.,pressure:1.,tilt:0.},100.);e.end();assert!(e.state.layers[0].pixels[20*800+23]>>24>0);
+    }
+}
+
+#[test]
+fn only_member_can_be_dragged_past_its_own_folder_boundary(){
+    let mut e=Engine::new(64,64).unwrap();e.command(&json!({"op":"add"})).unwrap();e.command(&json!({"op":"group","action":"create"})).unwrap();
+    e.command(&json!({"op":"moveLayer","id":2,"targetId":2,"groupId":null,"above":false})).unwrap();assert_eq!(e.state.layers[1].group_id,None);assert_eq!(e.state.layers[1].id,2);
+    e.undo();assert_eq!(e.state.layers[1].group_id,Some(1));
+}

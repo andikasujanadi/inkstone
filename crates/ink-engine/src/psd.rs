@@ -99,10 +99,10 @@ impl Engine {
                 solid: 0,
                 rect,
                 opacity: layer.opacity,
-                visible: layer.visible,
+                visible: layer.is_visible(),
                 clipping: layer.clipping,
                 alpha_lock: layer.alpha_lock,
-                locked: layer.locked,
+                locked: layer.is_locked(),
                 blend: &layer.blend,
                 id: layer.id,mask:layer.mask.as_deref().map(|m|m.as_slice()),mask_enabled:layer.mask_enabled,
             });

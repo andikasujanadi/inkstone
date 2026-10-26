@@ -95,11 +95,12 @@ class EditorView(val activity: MainActivity, val session: DrawingSession) : Fram
         }
         canvas.quickShapeEdit.changed={updateBottom();activity.scheduleSave()}
         canvas.onInputDevice=::inspectDevice
-        session.onToolChange={canvas.finishQuickShape();canvas.syncTransformTool()}
-        session.beforeSnapshot={canvas.finishQuickShape();canvas.rasterTransform.finish()}
-        session.beforeCommand={op->if(op !in listOf("info","pick","selectionPreview")){canvas.finishQuickShape();if(op !in listOf("transformMatrix","transformProjective","transformMesh"))canvas.rasterTransform.finish()}}
+        session.onToolChange={if(session.tool!="Liquify")canvas.liquify.finish();if(session.tool!="Guide")canvas.guides.editing=false;canvas.finishQuickShape();canvas.syncTransformTool()}
+        session.beforeSnapshot={canvas.liquify.finish();canvas.finishQuickShape();canvas.rasterTransform.finish()}
+        session.beforeCommand={op->if(!op.startsWith("liquify") && op !in listOf("info","pick","selectionPreview") && canvas.liquify.active){canvas.liquify.finish();session.tool="Paint"};if(op !in listOf("info","pick","selectionPreview")){canvas.finishQuickShape();if(op !in listOf("transformMatrix","transformProjective","transformMesh"))canvas.rasterTransform.finish()}}
         session.onFrame={canvas.onRenderedFrame()}
         session.onInfo={canvas.syncSelection();refreshTools()}
+        session.onHistoryNotice=::showNotice
         session.onError={showNotice(it);activity.message(it)}
         refreshTools()
         post{if(ReferencePanel.wasOpen(activity))showReference()}
@@ -190,7 +191,7 @@ class EditorView(val activity: MainActivity, val session: DrawingSession) : Fram
         toolbar.addView(right,LayoutParams(-2,dp(44),Gravity.TOP or Gravity.RIGHT).apply{topMargin=if(narrow)dp(44) else 0})
         historyControls=FrameLayout(activity).apply{setBackgroundColor(StudioColors.toolbar);contentDescription="History and save"}
         val undoRedo=LinearLayout(activity)
-        for(symbol in listOf("Undo","Redo"))undoRedo.addView(icon(symbol){session.command(symbol.lowercase());activity.scheduleSave();showNotice(symbol)},LinearLayout.LayoutParams(dp(44),dp(44)))
+        for(symbol in listOf("Undo","Redo"))undoRedo.addView(icon(symbol){session.command(symbol.lowercase());activity.scheduleSave()},LinearLayout.LayoutParams(dp(44),dp(44)))
         historyControls.addView(undoRedo,LayoutParams(dp(88),dp(44),Gravity.CENTER))
         (saveButton.parent as? android.view.ViewGroup)?.removeView(saveButton)
         saveButton.setTextColor(if(session.lightInterface)Color.BLACK else Color.WHITE)
@@ -222,8 +223,8 @@ class EditorView(val activity: MainActivity, val session: DrawingSession) : Fram
     }
     private fun buildSidebar(){
         sidebar=LinearLayout(activity).apply{orientation=LinearLayout.VERTICAL;gravity=Gravity.CENTER;setPadding(0,dp(10),0,dp(10));setBackgroundColor(StudioColors.rail);contentDescription="Docked brush controls"}
-        sizeSlider=VerticalSlider(activity,"Brush size",sqrt(session.size/600f)){session.size=(it*it*600f).coerceAtLeast(.5f);updateHud(sizeSlider,false)}
-        opacitySlider=VerticalSlider(activity,"Brush opacity",session.opacity){session.opacity=it;updateHud(opacitySlider,true)}
+        sizeSlider=VerticalSlider(activity,"Brush size",sqrt(session.size/600f)){if(session.tool=="Liquify")canvas.liquify.size=(it*it*600f).coerceAtLeast(8f)else session.size=(it*it*600f).coerceAtLeast(.5f);updateHud(sizeSlider,false)}
+        opacitySlider=VerticalSlider(activity,"Brush opacity",session.opacity){if(session.tool=="Liquify")canvas.liquify.strength=it.coerceAtLeast(.01f)else session.opacity=it;updateHud(opacitySlider,true)}
         sidebar.addView(sizeSlider,LinearLayout.LayoutParams(dp(32),0,1f))
         sidebar.addView(icon("Eyedropper"){dismissPanel();session.tool=if(session.tool=="Eyedropper")"Paint" else "Eyedropper";refreshTools();showNotice("Touch the canvas to pick a color")},LinearLayout.LayoutParams(dp(32),dp(44)))
         sidebar.addView(opacitySlider,LinearLayout.LayoutParams(dp(32),0,1f))
@@ -263,6 +264,7 @@ class EditorView(val activity: MainActivity, val session: DrawingSession) : Fram
         else brushHud.postDelayed(hideHud,650)
     }
     private fun updateHud(slider:VerticalSlider,opacity:Boolean){
+        brushHud.labelOverride=if(session.tool=="Liquify" && opacity)"Strength"else null
         brushHud.value=slider.value;brushHud.opacityMode=opacity;brushHud.soft=(session.tool=="Erase" && session.eraserHardness<.7f) || session.preset.kind in listOf(2,4,8)
         brushHud.mark={slider.bookmark=slider.value;slider.invalidate();showNotice("Slider position saved")}
         val params=brushHud.layoutParams as? LayoutParams ?: return
@@ -275,8 +277,8 @@ class EditorView(val activity: MainActivity, val session: DrawingSession) : Fram
         canvas.syncTransformTool()
         colorHeader?.setBackgroundColor(session.color)
         for((symbol,view)in icons){view.activeTool=when(symbol){"Color"->panelKey=="Colors";"Layers"->panelKey=="Layers";"Actions"->panelKey=="Actions";"Adjustments"->panelKey=="Adjustments";else->session.tool==symbol};view.swatch=session.color;view.invalidate()}
-        if(::sizeSlider.isInitialized)sizeSlider.value=sqrt(session.size/600f)
-        if(::opacitySlider.isInitialized)opacitySlider.value=session.opacity
+        if(::sizeSlider.isInitialized){sizeSlider.value=sqrt((if(session.tool=="Liquify")canvas.liquify.size else session.size)/600f);sizeSlider.contentDescription=if(session.tool=="Liquify")"Liquify size"else"Brush size"}
+        if(::opacitySlider.isInitialized){opacitySlider.value=if(session.tool=="Liquify")canvas.liquify.strength else session.opacity;opacitySlider.contentDescription=if(session.tool=="Liquify")"Liquify strength"else"Brush opacity"}
         if(::bottom.isInitialized)updateBottom()
         canvas.invalidate()
     }
@@ -284,7 +286,7 @@ class EditorView(val activity: MainActivity, val session: DrawingSession) : Fram
         bottom.removeAllViews();bottomOptions.removeAllViews();bottomOptionsScroll.visibility=GONE
         val context=when{canvas.quickShapeEdit.released->"Shape edit";session.info.optBoolean("maskEditing")->"Mask edit";else->session.tool}
         if(context!=bottomContext){bottomContext=context;bottomGroup=""}
-        if(interfaceHidden || session.tool !in listOf("Select","Transform","Fill") && !session.info.optBoolean("maskEditing") && !canvas.quickShapeEdit.released){bottomHost.visibility=GONE;return};bottomHost.visibility=VISIBLE
+        if(interfaceHidden || session.tool !in listOf("Select","Transform","Fill","Guide","Liquify") && !session.info.optBoolean("maskEditing") && !canvas.quickShapeEdit.released){bottomHost.visibility=GONE;return};bottomHost.visibility=VISIBLE
         var row=bottom
         fun button(label:String,selected:Boolean=false,action:()->Unit){val v=text(label,13f,if(selected)blue else Color.WHITE).apply{isClickable=true;isFocusable=true;setPadding(dp(10),0,dp(10),0);background=selectable();setOnClickListener{action()}};row.addView(v,LinearLayout.LayoutParams(-2,dp(44)))}
         fun group(label:String,detail:String="",items:()->Unit){
@@ -306,6 +308,13 @@ class EditorView(val activity: MainActivity, val session: DrawingSession) : Fram
             button("Mask · Black hides"){session.color=Color.BLACK;refreshTools()};button("White reveals"){session.color=Color.WHITE;refreshTools()};button("Layer pixels"){maskAction("pixels")};return
         }
         when(session.tool){
+            "Liquify"->{
+                val l=canvas.liquify
+                group("Mode",l.mode){for(mode in listOf("Push","Pinch","Expand","Twirl right","Twirl left","Restore"))button(mode,l.mode==mode){l.mode=mode;updateBottom()}}
+                group("Brush"){button("Size: ${l.size.toInt()}"){liquifySlider(true)};button("Strength: ${(l.strength*100).toInt()}%"){liquifySlider(false)}}
+                button("Reset"){l.reset()};button("Cancel"){l.finish(true);session.tool="Paint";refreshTools()};button("Done"){l.finish();session.tool="Paint";refreshTools()}
+            }
+            "Guide"->{button("Drag vanishing points"){};button("Done"){canvas.guides.editing=false;canvas.guides.save();session.tool="Paint";refreshTools();canvas.invalidate()}}
             "Select"->{
                 group("Shape",canvas.selectionShape){for(shape in listOf("Automatic","Freehand","Rectangle","Ellipse"))button(shape,canvas.selectionShape==shape){canvas.selectionShape=shape;updateBottom()}}
                 group("Combine",canvas.selectionMode){for(mode in listOf("Replace","Add","Remove"))button(mode,canvas.selectionMode==mode){canvas.selectionMode=mode;updateBottom()};button("Invert"){selectionAction("invertSelection")}}
@@ -424,46 +433,36 @@ class EditorView(val activity: MainActivity, val session: DrawingSession) : Fram
         panel("Brushes",when(session.tool){"Erase"->"Eraser Library";"Smudge"->"Smudge Library";else->"Brush Library"},820,extra={heading->heading.addView(icon("Add"){brushStudio()})}){body->
             val columns=LinearLayout(activity).apply{orientation=LinearLayout.HORIZONTAL}
             val categories=LinearLayout(activity).apply{orientation=LinearLayout.VERTICAL}
-            var activeCategoryView: View? = null
+            val list=LinearLayout(activity).apply{orientation=LinearLayout.VERTICAL;setPadding(dp(3),dp(2),dp(4),0)}
+            val listScroll=ScrollView(activity).apply{isVerticalScrollBarEnabled=false;addView(list);tag="brush-presets-scroll"}
+            val categoryViews=mutableMapOf<String,LinearLayout>()
+            fun populate(){
+                list.removeAllViews();listScroll.scrollTo(0,0)
+                categoryViews.forEach{(group,item)->item.background=rounded(if(group==brushGroup)blue else 0x226e7175,StudioShape.CORNER_DP);(item.getChildAt(1) as TextView).setTextColor(if(group==brushGroup)Color.WHITE else 0xffbdc6ca.toInt())}
+                val presets=if(brushGroup=="Recent")(RecentBrushes(activity).list(session.tool)+session.preset).distinct() else brushPresets.filter{it.group==brushGroup}.sortedBy{if(brushGroup=="Airbrushing")listOf("Soft Brush","Medium Brush","Medium Hard Brush","Hard Brush","Soft Blend","Medium Blend","Medium Hard Blend","Hard Blend","Soft Airbrush","Medium Airbrush","Fine Airbrush").indexOf(it.name) else 0}
+                val previews=mutableListOf<BrushPreview>()
+                for(preset in presets){
+                    val preview=BrushPreview(activity,preset,session.preset==preset,session.tool=="Erase").apply{
+                        isClickable=true;isFocusable=true
+                        setOnClickListener{StudioMotion.bounce(this);session.choose(preset);activity.savePreferences();refreshTools();previews.forEach{it.chosen=it.preset==preset;it.invalidate()}}
+                        setOnLongClickListener{session.choose(preset);activity.savePreferences();brushStudio();true}
+                    }
+                    previews.add(preview);list.addView(preview,LinearLayout.LayoutParams(-1,dp(72)).apply{bottomMargin=dp(3)})
+                }
+                if(presets.isEmpty())list.addView(text("No imported brushes",13f,0xffb4bec2.toInt()),LinearLayout.LayoutParams(-1,dp(64)))
+            }
             for(group in brushCategories){
-                val item=LinearLayout(activity).apply{gravity=Gravity.CENTER_VERTICAL;background=rounded(if(group==brushGroup)blue else 0x226e7175,StudioShape.CORNER_DP);setPadding(dp(10),0,0,0);isClickable=true;isFocusable=true;contentDescription=group;setOnClickListener{brushGroup=group;rebuildPanel(::brushes)}}
-                if(group == brushGroup) activeCategoryView = item
+                val item=LinearLayout(activity).apply{gravity=Gravity.CENTER_VERTICAL;setPadding(dp(10),0,0,0);isClickable=true;isFocusable=true;contentDescription=group;setOnClickListener{brushGroup=group;populate()}}
                 item.addView(CategoryIcon(activity,group,false),LinearLayout.LayoutParams(dp(25),dp(32)))
-                item.addView(text(group,12f,if(group==brushGroup)Color.WHITE else 0xffbdc6ca.toInt()).apply{setPadding(dp(8),0,0,0)},LinearLayout.LayoutParams(-1,-1))
+                item.addView(text(group,12f).apply{setPadding(dp(8),0,0,0)},LinearLayout.LayoutParams(-1,-1))
+                categoryViews[group]=item
                 categories.addView(item,LinearLayout.LayoutParams(-1,dp(46)).apply{setMargins(dp(2),dp(4),dp(6),dp(4))})
             }
-            val categoryScroll = ScrollView(activity).apply{isVerticalScrollBarEnabled=false;addView(categories)}
-            activeCategoryView?.let { v ->
-                categoryScroll.post { categoryScroll.smoothScrollTo(0, (v.top - dp(30)).coerceAtLeast(0)) }
-            }
+            val categoryScroll=ScrollView(activity).apply{isVerticalScrollBarEnabled=false;addView(categories);tag="brush-categories-scroll"}
+            categoryViews[brushGroup]?.let{v->categoryScroll.post{categoryScroll.scrollTo(0,(v.top-dp(30)).coerceAtLeast(0))}}
             columns.addView(categoryScroll,LinearLayout.LayoutParams(dp(145),-1))
-            val list=LinearLayout(activity).apply{orientation=LinearLayout.VERTICAL;setPadding(dp(3),dp(2),dp(4),0)}
-            val presets=if(brushGroup=="Recent")listOf(session.preset) else brushPresets.filter{it.group==brushGroup}.sortedBy{if(brushGroup=="Airbrushing")listOf("Soft Brush","Medium Brush","Medium Hard Brush","Hard Brush","Soft Blend","Medium Blend","Medium Hard Blend","Hard Blend","Soft Airbrush","Medium Airbrush","Fine Airbrush").indexOf(it.name) else 0}
-            val previews=mutableListOf<BrushPreview>()
-            var activePreview: View? = null
-            for(preset in presets){
-                val isCurrent = session.preset == preset
-                val preview=BrushPreview(activity,preset,isCurrent,session.tool=="Erase").apply{
-                    isClickable=true;isFocusable=true
-                    setOnClickListener{
-                        StudioMotion.bounce(this)
-                        session.choose(preset)
-                        brushGroup = preset.group
-                        activity.savePreferences()
-                        refreshTools()
-                        previews.forEach{it.chosen=it.preset==preset;it.invalidate()}
-                    }
-                    setOnLongClickListener{session.choose(preset);brushGroup = preset.group;activity.savePreferences();brushStudio();true}
-                }
-                if(isCurrent) activePreview = preview
-                previews.add(preview);list.addView(preview,LinearLayout.LayoutParams(-1,dp(72)).apply{bottomMargin=dp(3)})
-            }
-            if(presets.isEmpty())list.addView(text("No imported brushes",13f,0xffb4bec2.toInt()),LinearLayout.LayoutParams(-1,dp(64)))
-            val listScroll = ScrollView(activity).apply{isVerticalScrollBarEnabled=false;addView(list)}
-            activePreview?.let { v ->
-                listScroll.post { listScroll.smoothScrollTo(0, (v.top - dp(30)).coerceAtLeast(0)) }
-            }
             columns.addView(listScroll,LinearLayout.LayoutParams(0,-1,1f))
+            populate()
             body.addView(columns,LinearLayout.LayoutParams(-1,-1))
         }
     }
@@ -545,11 +544,29 @@ class EditorView(val activity: MainActivity, val session: DrawingSession) : Fram
     }
 
     private fun layers(){
-        panel("Layers","Layers",710,extra={h->h.addView(icon("Add"){session.command("add"){session.thumbnails{rebuildPanel(::layers)};activity.scheduleSave()}})}){body->
+        panel("Layers","Layers",710,extra={h->h.addView(text("Group",14f).apply{setPadding(dp(10),0,dp(10),0);isClickable=true;contentDescription="Create layer group";setOnClickListener{activity.textDialog("Group name","New group"){name->groupAction("create",null,JSONObject().put("name",name))}}});h.addView(icon("Add"){session.command("add"){session.thumbnails{rebuildPanel(::layers)};activity.scheduleSave()}})}){body->
+            body.tag="layer-list"
             val layers=session.info.getJSONArray("layers");val active=session.info.getInt("active")
             val expanded=mutableListOf<View>()
+            val groups=session.info.optJSONArray("groups")?:org.json.JSONArray()
+            val seenGroups=mutableSetOf<Long>()
+            fun header(group:JSONObject){
+                val id=group.getLong("id");val name=group.getString("name")
+                val line=LinearLayout(activity).apply{gravity=Gravity.CENTER_VERTICAL;background=rounded(0x554c535a,StudioShape.CORNER_DP)}
+                line.addView(text((if(group.optBoolean("collapsed"))"▸ "else"▾ ")+name,15f).apply{gravity=Gravity.CENTER_VERTICAL;setPadding(dp(10),0,0,0);isClickable=true;contentDescription="Toggle group $name";setOnClickListener{groupAction("update",id,JSONObject().put("collapsed",!group.optBoolean("collapsed")))}},LinearLayout.LayoutParams(0,dp(48),1f))
+                line.addView(text("…",20f).apply{gravity=Gravity.CENTER;isClickable=true;contentDescription="Options for group $name";setOnClickListener{groupOptions(group)}},LinearLayout.LayoutParams(dp(44),dp(48)))
+                line.addView(CheckBox(activity).apply{isChecked=group.getBoolean("visible");contentDescription="$name group visible";setOnCheckedChangeListener{_,checked->groupAction("update",id,JSONObject().put("visible",checked))}},LinearLayout.LayoutParams(dp(44),dp(48)))
+                line.tag="group-$id"
+                LayerDrag.target(line,session,folder=true,open=!group.optBoolean("collapsed"),canJoin={source->(0 until layers.length()).map{layers.getJSONObject(it)}.firstOrNull{it.getLong("id")==source}?.optLong("groupId",-1)!=id}){layer,above,join->
+                    val members=(layers.length()-1 downTo 0).map{layers.getJSONObject(it)}.filter{it.optLong("groupId",-1)==id};val own=members.any{it.getLong("id")==layer}
+                    moveLayer(layer,if(join)null else members.firstOrNull()?.getLong("id"),if(join || (own && !above))id else null,if(own && !above)true else above)
+                }
+                body.addView(line,LinearLayout.LayoutParams(-1,dp(48)).apply{topMargin=dp(5)})
+            }
             for(i in layers.length()-1 downTo 0){
                 val layer=layers.getJSONObject(i);val name=layer.getString("name")
+                val group=if(layer.isNull("groupId"))null else (0 until groups.length()).map{groups.getJSONObject(it)}.firstOrNull{it.getLong("id")==layer.getLong("groupId")}
+                if(group!=null){if(seenGroups.add(group.getLong("id")))header(group);if(group.optBoolean("collapsed"))continue}
                 val layerRow=LinearLayout(activity).apply{orientation=LinearLayout.HORIZONTAL;gravity=Gravity.CENTER_VERTICAL;setPadding(dp(5),dp(5),dp(8),dp(5));background=rounded(if(i==active)blue else 0x443d3d3d,StudioShape.CORNER_DP);isClickable=true;isFocusable=true}
                 val thumbnail=FrameLayout(activity).apply{background=rounded(0x336e777c,StudioShape.CORNER_DP);clipToOutline=true}
                 thumbnail.addView(ImageView(activity).apply{scaleType=ImageView.ScaleType.FIT_CENTER;setImageBitmap(session.layerThumbnails.getOrNull(i))},LayoutParams(-1,-1));layerRow.addView(thumbnail,LinearLayout.LayoutParams(dp(56),dp(56)))
@@ -562,15 +579,19 @@ class EditorView(val activity: MainActivity, val session: DrawingSession) : Fram
                     val open=dropdown.visibility!=VISIBLE;expanded.forEach{it.visibility=GONE};dropdown.visibility=if(open)VISIBLE else GONE
                 }}
                 layerRow.addView(blendButton,LinearLayout.LayoutParams(dp(32),dp(48)))
-                layerRow.addView(CheckBox(activity).apply{isChecked=layer.getBoolean("visible");contentDescription="$name visible";buttonTintList=android.content.res.ColorStateList.valueOf(Color.WHITE);setOnCheckedChangeListener{_,b->session.command("layer",JSONObject().put("index",i).put("visible",b));activity.scheduleSave()}},LinearLayout.LayoutParams(dp(36),dp(48)))
+                layerRow.addView(CheckBox(activity).apply{isChecked=layer.optBoolean("ownVisible",layer.getBoolean("visible"));contentDescription="$name visible";buttonTintList=android.content.res.ColorStateList.valueOf(Color.WHITE);setOnCheckedChangeListener{_,b->session.command("layer",JSONObject().put("index",i).put("visible",b));activity.scheduleSave()}},LinearLayout.LayoutParams(dp(36),dp(48)))
                 layerRow.setOnClickListener{if(i==active)layerOptions(i)else session.command("active",JSONObject().put("index",i)){rebuildPanel(::layers)}}
-                layerRow.setOnLongClickListener{layerOptions(i);true}
+                LayerDrag.source(layerRow,session,layer.getLong("id"),name)
+                LayerDrag.target(layerRow,session){source,above,_->
+                    val id=layer.optLong("groupId",-1);val bottom=id>=0 && (i==0 || layers.getJSONObject(i-1).optLong("groupId",-1)!=id)
+                    moveLayer(source,layer.getLong("id"),if(id<0 || (!above && bottom))null else id,above)
+                }
                 val actions=LinearLayout(activity)
                 fun swipeAction(label:String,color:Int=0xff303030.toInt(),run:()->Unit){actions.addView(text(label,12f).apply{gravity=Gravity.CENTER;setPadding(dp(2),0,dp(2),0);background=rounded(color,StudioShape.CORNER_DP);isClickable=true;isFocusable=true;contentDescription="$label $name";setOnClickListener{isEnabled=false;run()}},LinearLayout.LayoutParams(0,-1,1f).apply{leftMargin=dp(2)})}
                 swipeAction(if(layer.optBoolean("locked"))"Unlock" else "Lock"){session.command("layer",JSONObject().put("index",i).put("locked",!layer.optBoolean("locked"))){rebuildPanel(::layers);activity.scheduleSave()}}
                 fun action(op:String){session.command("active",JSONObject().put("index",i)){session.command(op){session.thumbnails{rebuildPanel(::layers)};activity.scheduleSave()}}}
                 swipeAction("Duplicate"){action("duplicate")};swipeAction("Delete",0xffff4c45.toInt()){action("delete")}
-                body.addView(SwipeLayerRow(activity,layerRow,actions,dp(216)).apply{contentDescription="Layer row $name"},LinearLayout.LayoutParams(-1,dp(69)).apply{setMargins(dp(2),dp(1),dp(2),dp(1))})
+                body.addView(SwipeLayerRow(activity,layerRow,actions,dp(216)).apply{contentDescription="Layer row $name";tag="layer-${layer.getLong("id")}"},LinearLayout.LayoutParams(-1,dp(69)).apply{setMargins(dp(if(group!=null)22 else 2),dp(1),dp(2),dp(1))})
                 val opacityRow=LinearLayout(activity).apply{gravity=Gravity.CENTER_VERTICAL};opacityRow.addView(text("Opacity",15f),LinearLayout.LayoutParams(0,dp(32),1f));val opacityLabel=text(if(layer.getDouble("opacity")==1.0)"Max" else "${(layer.getDouble("opacity")*100).roundToInt()}%",14f);opacityRow.addView(opacityLabel);dropdown.addView(opacityRow)
                 dropdown.addView(SeekBar(activity).apply{max=100;progress=(layer.getDouble("opacity")*100).roundToInt();contentDescription="Opacity for $name";progressTintList=android.content.res.ColorStateList.valueOf(blue);thumbTintList=android.content.res.ColorStateList.valueOf(Color.WHITE);setOnSeekBarChangeListener(object:SeekBar.OnSeekBarChangeListener{override fun onStartTrackingTouch(s:SeekBar){};override fun onProgressChanged(s:SeekBar,p:Int,user:Boolean){opacityLabel.text=if(p==100)"Max" else "$p%"};override fun onStopTrackingTouch(s:SeekBar){session.command("layer",JSONObject().put("index",i).put("opacity",s.progress/100f));activity.scheduleSave()}})},LinearLayout.LayoutParams(-1,dp(28)))
                 val modes=listOf("Darken","Multiply","Colour Burn","Linear Burn","Darker Colour","Normal","Lighten","Screen","Colour Dodge","Add","Overlay","Hard Light","Difference","Exclusion","Subtract")
@@ -579,8 +600,9 @@ class EditorView(val activity: MainActivity, val session: DrawingSession) : Fram
                     session.command("layer",JSONObject().put("index",i).put("blend",mode))
                     modeRows.forEach{(m,v)->v.background=rounded(if(m==mode)blue else Color.TRANSPARENT,StudioShape.CORNER_DP)};blendButton.text=if(mode=="Normal")"N" else mode.take(1);activity.scheduleSave()
                 };v.contentDescription="Blend $mode for $name";v.background=rounded(if(mode==layer.getString("blend"))blue else Color.TRANSPARENT,StudioShape.CORNER_DP);modeRows[mode]=v;dropdown.addView(v,LinearLayout.LayoutParams(-1,dp(40)))}
-                body.addView(dropdown,LinearLayout.LayoutParams(-1,-2))
+                body.addView(dropdown,LinearLayout.LayoutParams(-1,-2).apply{leftMargin=if(group!=null)dp(20)else 0})
             }
+            for(j in 0 until groups.length()){val group=groups.getJSONObject(j);if(seenGroups.add(group.getLong("id")))header(group)}
             body.addView(row("Background colour","●"){
                 val colors=intArrayOf(Color.WHITE,0xfffaf9f6.toInt(),0xff181818.toInt(),session.color)
                 AlertDialog.Builder(activity).setTitle("Background colour").setItems(arrayOf("White","Warm paper","Black","Current colour","Toggle transparency")){_,which->
@@ -590,6 +612,35 @@ class EditorView(val activity: MainActivity, val session: DrawingSession) : Fram
             })
         }
     }
+    private fun moveLayer(id:Long,target:Long?,group:Long?,above:Boolean){
+        val motion=LayerDrag.capture(this,session)
+        session.command("moveLayer",JSONObject().put("id",id).put("targetId",target?:JSONObject.NULL).put("groupId",group?:JSONObject.NULL).put("above",above)){session.thumbnails{rebuildPanel(::layers);motion.settle(this)};activity.scheduleSave()}
+    }
+    private fun groupAction(action:String,id:Long?,values:JSONObject=JSONObject()){
+        values.put("action",action);if(id!=null)values.put("id",id)
+        session.command("group",values){session.thumbnails{rebuildPanel(::layers)};activity.scheduleSave()}
+    }
+    private fun groupOptions(group:JSONObject){
+        val id=group.getLong("id")
+        AlertDialog.Builder(activity).setTitle(group.getString("name")).setItems(arrayOf("Rename",if(group.optBoolean("locked"))"Unlock group"else"Lock group","Move contents","Ungroup")){_,which->when(which){
+            0->activity.textDialog("Group name",group.getString("name")){groupAction("update",id,JSONObject().put("name",it))}
+            1->groupAction("update",id,JSONObject().put("locked",!group.optBoolean("locked")))
+            2->GroupMoveDialog.show(activity){x,y->groupAction("translate",id,JSONObject().put("x",x).put("y",y))}
+            3->groupAction("ungroup",id)
+        }}.show()
+    }
+    private fun chooseLayerGroup(index:Int){
+        val groups=session.info.optJSONArray("groups")?:org.json.JSONArray()
+        val options=listOf("New group","Remove from group")+(0 until groups.length()).map{groups.getJSONObject(it).getString("name")}
+        AlertDialog.Builder(activity).setTitle("Layer group").setItems(options.toTypedArray()){_,which->
+            val layer=session.info.getJSONArray("layers").getJSONObject(index)
+            when(which){
+                0->activity.textDialog("Group name","New group"){groupAction("create",null,JSONObject().put("name",it).put("index",index))}
+                1->if(!layer.isNull("groupId"))groupAction("removeMember",layer.getLong("groupId"),JSONObject().put("index",index))
+                else->groupAction("member",groups.getJSONObject(which-2).getLong("id"),JSONObject().put("index",index))
+            }
+        }.show()
+    }
     private fun maskAction(action:String,enabled:Boolean?=null){
         val values=JSONObject().put("action",action);if(enabled!=null)values.put("enabled",enabled)
         session.command("mask",values){
@@ -598,11 +649,13 @@ class EditorView(val activity: MainActivity, val session: DrawingSession) : Fram
         }
     }
     private fun layerOptions(index:Int){
+        if(session.info.getInt("active")!=index){session.command("active",JSONObject().put("index",index)){layerOptions(index)};return}
         val l=session.info.getJSONArray("layers").getJSONObject(index)
         rebuildPanel{
             panel("Layer Options",l.getString("name"),680){body->
                 body.addView(row("← Back to Layers"){rebuildPanel(::layers)})
                     body.addView(row("Move / resize contents"){startLayerTransform()})
+                body.addView(row("Layer group"){chooseLayerGroup(index)})
                 body.addView(row("Rename"){activity.textDialog("Layer name",l.getString("name")){name->session.command("layer",JSONObject().put("name",name)){rebuildPanel(::layers);activity.scheduleSave()}}})
                 slider(body,"Opacity",l.getDouble("opacity").toFloat()){value->session.command("layer",JSONObject().put("opacity",value));activity.scheduleSave()}
                 body.addView(row("Blend Mode",l.getString("blend")){
@@ -664,7 +717,8 @@ class EditorView(val activity: MainActivity, val session: DrawingSession) : Fram
                 toggle(body,"Pinch to fit canvas",session.pinchToFit){session.pinchToFit=it;activity.savePreferences();showNotice(if(it)"Quick zoom out snaps canvas into view" else "Pinch to fit disabled")}
                 body.addView(row("Symmetry",session.symmetryMode){symmetrySettings()})
                 body.addView(row("Reference image"){dismissPanel();showReference()})
-                toggle(body,"Drawing Guide",session.guide){session.guide=it;canvas.invalidate()}
+                toggle(body,"Drawing Guide",canvas.guides.enabled){session.guide=it;canvas.guides.enabled=it;canvas.guides.save();canvas.invalidate()}
+                body.addView(row("Drawing guide settings",canvas.guides.mode){canvas.guides.settings(activity,{canvas.invalidate()},{dismissPanel();session.tool="Guide";refreshTools()})})
                 body.addView(row("Fit canvas"){canvas.animateFit();dismissPanel()})
                 body.addView(row("Reset rotation"){canvas.resetRotation();dismissPanel();showNotice("Rotation reset to 0°")})
                 body.addView(row("Flip canvas horizontally"){session.command("flipCanvas",JSONObject().put("horizontal",true));canvas.deselect();activity.scheduleSave()})
@@ -672,7 +726,7 @@ class EditorView(val activity: MainActivity, val session: DrawingSession) : Fram
             }
             "Share"->{body.addView(text("Save a copy to your device",14f,0xffbcc5cc.toInt()),LinearLayout.LayoutParams(-1,dp(40)));for(format in listOf("Inkstone","PNG","JPEG","PSD"))body.addView(row(format,if(format=="Inkstone" || format=="PSD")"Editable layers" else "Flattened image"){dismissPanel();activity.export(format)})}
             "Video"->{body.addView(text("Time-lapse recording is not available in this preview.",15f,0xffbfc8cb.toInt()),LinearLayout.LayoutParams(-1,dp(90)))}
-            "Help"->{body.addView(row("About Inkstone","0.1.7-dev"){activity.message("Independent Android painting app. See README and the parity tracker for supported features.")})}
+            "Help"->{body.addView(row("About Inkstone",activity.packageManager.getPackageInfo(activity.packageName,0).versionName?:"Preview"){activity.message("Independent Android painting app. See README and the parity tracker for supported features.")})}
             "Prefs"->{
                 val rendering=preferenceGroup(body)
                 rendering.addView(row("Drawing renderer",if(session.rendererMode=="auto")"GPU · Auto" else "CPU"){rendererSettings()})
@@ -826,11 +880,16 @@ class EditorView(val activity: MainActivity, val session: DrawingSession) : Fram
         if(panelKey=="Adjustments"){dismissPanel();return}
         if(panel!=null && panelIsLeft && !replacingPanel){rebuildPanel(::adjustments);return}
         panel("Adjustments","Adjustments",440,left=true){body->
+            body.addView(row("Liquify"){dismissPanel();session.tool="Liquify";canvas.liquify.begin();refreshTools();activity.deferAutosave();showNotice("Liquify · drag to deform, Done to apply")})
             for(kind in listOf("Brightness","Saturation","Blur","Grayscale","Invert"))body.addView(row(kind){
                 if(kind in listOf("Grayscale","Invert")){session.command("adjust",JSONObject().put("kind",kind));dismissPanel();activity.scheduleSave()}
                 else adjustmentSlider(kind)
             })
         }
+    }
+    private fun liquifySlider(size:Boolean){
+        val l=canvas.liquify;val seek=SeekBar(activity).apply{max=if(size)592 else 99;progress=if(size)(l.size-8).toInt()else(l.strength*100).toInt()-1;contentDescription=if(size)"Liquify size"else"Liquify strength"}
+        AlertDialog.Builder(activity).setTitle(if(size)"Liquify size"else"Liquify strength").setView(seek).setPositiveButton("Apply"){_,_->if(size)l.size=seek.progress+8f else l.strength=(seek.progress+1)/100f;updateBottom()}.setNegativeButton("Cancel",null).show()
     }
     private fun adjustmentSlider(kind:String){
         rebuildPanel{

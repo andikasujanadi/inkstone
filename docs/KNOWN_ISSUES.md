@@ -1,8 +1,24 @@
 # Known issues
 
+## Current preview7
+
+Grouped layers are indented in both editors and animate into/out of their folders. The release includes the locally tested gallery, brush, Warp, guide and Liquify work below. Retest slow Fade starts, stylus input, drag timing and large Liquify brushes on physical Android devices. Groups/stacks are one level; folder hierarchy and gallery library metadata are not included in exported artwork. See [current release instructions](LOCAL_PREVIEW_019_7.md) for the detailed limits. Older preview sections below are historical feedback, not the current feature inventory.
+
+## Local preview6 — awaiting device testing
+
+[Preview6](LOCAL_PREVIEW_019_6.md) addresses the faint remaining cap on slow Fade starts, adds animated layer insertion lines and boundary-based folder exit, and removes Outside groups. It also adds local gallery sorting, tags, named stacks/counts and animated artwork drag/drop. Gallery library metadata is device-local and separate from exported artwork. Physical stylus behavior and animation frame pacing still need retesting on the reporting devices.
+
+## Local preview5 — awaiting device testing
+
+The [unpublished preview5](LOCAL_PREVIEW_019_5.md) addresses the opaque Fade start cap and replaces folder-menu-only organization with long-press layer drag/drop in both editors. It also adds named Undo/Redo feedback, drawing guides and basic Raster Liquify. User feedback on preview4 described the other changes as appearing okay; the new build still needs physical-device retesting. Guides are overlays with device-wide settings, and Liquify uses CPU raster resampling with a limited radius and no editable Vector deformation. See the preview instructions for access and limits.
+
+## Local preview4 — awaiting device testing
+
+The unpublished [preview4 build](LOCAL_PREVIEW_019_4.md) implements per-tool persistent Recent history, category changes without rebuilding the category scroller, speed-sensitive constant-width Fade and smoothly interpolated Warp. It also adds basic editable Raster/Vector folders. Local regression tests pass; the reporting devices still need retesting. Groups are one level, with numeric offset movement and no group blend/opacity, nested folders or gesture group scaling. PSD/SVG folder hierarchy export is not implemented.
+
 ## Device feedback — 26 October 2026
 
-The following issues remain in 0.1.9-preview3. They are recorded for later work, not claimed fixed in this release.
+The following describes the published 0.1.9-preview3. It is retained as the baseline for the local preview4 changes above.
 
 - **Recent brushes:** Recent currently shows only the active brush rather than a history of multiple brushes.
 - **Fade Brush:** the user reports that the fade still does not behave correctly. The intended behavior is a fading tail with constant width and unrestricted stroke length. Framework/native regression tests do not establish that the device result meets that expectation.

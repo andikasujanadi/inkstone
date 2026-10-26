@@ -394,3 +394,31 @@ fn physical_gpu_feathered_selection_matches_cpu(){
     let mut gpu=gpu_engine(128,128);let mut cpu=Engine::new(128,128).unwrap();paint(&mut gpu);paint(&mut cpu);
     let error=gpu.state.layers[0].pixels.iter().zip(cpu.state.layers[0].pixels.iter()).flat_map(|(a,b)|[0,8,16,24].map(|shift|(((a>>shift)&255) as i32-((b>>shift)&255) as i32).abs())).max().unwrap();assert!(error<=3,"Feather CPU/GPU difference {error}");assert!(gpu.state.layers[0].pixels[60*128+30]>>24>0);assert_eq!(gpu.state.layers[0].pixels[60*128+5]>>24,0);
 }
+
+#[test]
+#[ignore = "requires a physical GPU"]
+fn physical_gpu_timed_fade_matches_cpu(){
+    let draw=|gpu:bool|{
+        let mut e=Engine::new(800,100).unwrap();if gpu{e.set_renderer("auto").unwrap();assert!(e.gpu.is_some());}
+        e.begin(Sample{x:20.,y:50.,pressure:1.,tilt:0.},Brush{size:64.,fade_length:180.,pressure_size:0.,stabilization:0.,..Brush::default()});e.set_sample_time(0.);
+        let mut time=0.;for i in 1..=150{time+=if i<75{30.}else{2.};e.sample_timed(Sample{x:20.+i as f32*5.,y:50.,pressure:1.,tilt:0.},time);if i%12==0{e.flush_gpu();}}
+        e.end();e.state.layers[0].pixels.clone()
+    };
+    let cpu=draw(false);let gpu=draw(true);
+    let error=cpu.iter().zip(gpu.iter()).map(|(a,b)|((*a>>24) as i32-(*b>>24) as i32).abs()).max().unwrap();assert!(error<=2,"timed Fade alpha mismatch: {error}");
+}
+
+#[test]
+#[ignore = "requires a physical GPU"]
+fn physical_gpu_fade_start_and_tap_match_cpu(){
+    let draw=|gpu:bool|{
+        let mut e=Engine::new(400,160).unwrap();if gpu{e.set_renderer("auto").unwrap();assert!(e.gpu.is_some());}
+        let b=Brush{size:40.,fade_length:100.,pressure_size:0.,stabilization:0.,..Brush::default()};
+        e.begin(Sample{x:30.,y:50.,pressure:1.,tilt:0.},b);e.set_sample_time(0.);
+        e.sample_timed(Sample{x:30.,y:50.,pressure:1.,tilt:0.},2.);
+        for i in 1..=60{e.sample_timed(Sample{x:30.+i as f32*5.,y:50.,pressure:1.,tilt:0.},2.+i as f32*2.);}e.end();
+        assert!(e.state.layers[0].pixels[50*400+30]>>24<150);
+        e.begin(Sample{x:30.,y:120.,pressure:1.,tilt:0.},b);e.set_sample_time(0.);e.end();assert!(e.state.layers[0].pixels[120*400+30]>>24>0);e.state.layers[0].pixels.clone()
+    };
+    let a=draw(false);let b=draw(true);let error=a.iter().zip(b.iter()).map(|(a,b)|((*a>>24) as i32-(*b>>24) as i32).abs()).max().unwrap();assert!(error<=2,"Fade cap/tap mismatch: {error}");
+}

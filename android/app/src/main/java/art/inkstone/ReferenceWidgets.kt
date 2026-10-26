@@ -52,6 +52,7 @@ internal class StudioSwitch(context:Context,label:String,initial:Boolean,private
 internal class BrushHud(context:Context):View(context){
     var value=.5f
     var opacityMode=false
+    var labelOverride:String?=null
     var soft=false
     var mark:(()->Unit)?=null
     private val p=Paint(Paint.ANTI_ALIAS_FLAG)
@@ -61,7 +62,7 @@ internal class BrushHud(context:Context):View(context){
         p.shader=null;p.style=Paint.Style.FILL;p.color=0xee394146.toInt();c.drawRoundRect(0f,0f,w,h,StudioShape.CORNER_DP*d,StudioShape.CORNER_DP*d,p)
         p.style=Paint.Style.STROKE;p.color=0xff758084.toInt();p.strokeWidth=d;c.drawRoundRect(d/2,d/2,w-d/2,h-d/2,StudioShape.CORNER_DP*d,StudioShape.CORNER_DP*d,p)
         p.style=Paint.Style.FILL;p.color=0xffeef2f3.toInt();p.textSize=14*d;p.typeface=Typeface.create("sans-serif-medium",Typeface.NORMAL)
-        c.drawText("${if(opacityMode)"Opacity" else "Size"} ${(value*100).roundToInt()}%",12*d,23*d,p)
+        c.drawText("${labelOverride?:if(opacityMode)"Opacity" else "Size"} ${(value*100).roundToInt()}%",12*d,23*d,p)
         p.strokeWidth=1.6f*d;c.drawLine(w-25*d,17*d,w-11*d,17*d,p);c.drawLine(w-18*d,10*d,w-18*d,24*d,p)
         val radius=if(opacityMode)w*.3f else (8+value*54)*d
         val cx=w/2;val cy=h*.59f

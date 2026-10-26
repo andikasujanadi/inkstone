@@ -70,40 +70,49 @@ internal class VectorObject(
     }
 }
 internal class VectorLayer(val id:Long,var name:String,var visible:Boolean=true,var locked:Boolean=false,var opacity:Float=1f,
-    val objects:MutableList<VectorObject> = mutableListOf())
+    val objects:MutableList<VectorObject> = mutableListOf()){
+    var groupId:Long?=null;var groupVisible=true;var groupLocked=false
+    val effectiveVisible get()=visible && groupVisible
+    val effectiveLocked get()=locked || groupLocked
+}
 
+internal data class VectorGroup(val id:Long,var name:String,var visible:Boolean=true,var locked:Boolean=false,var collapsed:Boolean=false){
+    fun json()=JSONObject().put("id",id).put("name",name).put("visible",visible).put("locked",locked).put("collapsed",collapsed)
+}
 internal class VectorDocument(val width:Int,val height:Int,val dpi:Int=300,var background:Int=Color.WHITE,var backgroundVisible:Boolean=true){
     init{require(width in 16..8192 && height in 16..8192 && width.toLong()*height<=16_777_216 && dpi in 1..2400){"Invalid Vector canvas"}}
     var layers=mutableListOf(VectorLayer(1,"Layer 1"));private set
+    var groups=mutableListOf<VectorGroup>()
     var active=0
     private var nextId=2L
-    private class Snapshot(bytes:ByteArray){
+    private class Snapshot(bytes:ByteArray,val action:String="Edit artwork"){
         private val compressed=bytes.size>16384
         val data=if(compressed)java.io.ByteArrayOutputStream().also{out->java.util.zip.GZIPOutputStream(out).use{it.write(bytes)}}.toByteArray()else bytes
         fun read()=if(compressed)java.util.zip.GZIPInputStream(data.inputStream()).use{it.readBytes()}else data
     }
     private val undo=ArrayDeque<Snapshot>();private val redo=ArrayDeque<Snapshot>()
+    var historyNotice="";private set
     val undoCount get()=undo.size
     val redoCount get()=redo.size
     fun nextId():Long{check(nextId<Long.MAX_VALUE-10000){"Vector identifier limit reached"};return nextId++}
     fun objectById(id:Long?)=layers.flatMap{it.objects}.firstOrNull{it.id==id}
     fun owner(id:Long?)=layers.firstOrNull{layer->layer.objects.any{it.id==id}}
     fun hit(point:PointF,tolerance:Float):VectorObject? {
-        for(layer in layers.asReversed())if(layer.visible && layer.opacity>0)for(obj in layer.objects.asReversed())if(obj.hit(point,tolerance))return obj
+        for(layer in layers.asReversed())if(layer.effectiveVisible && layer.opacity>0)for(obj in layer.objects.asReversed())if(obj.hit(point,tolerance))return obj
         return null
     }
     fun encode():ByteArray {
         val data=JSONObject().put("mode","vector").put("version",2).put("width",width).put("height",height).put("dpi",dpi)
             .put("background",background.toLong() and 0xffffffffL).put("backgroundVisible",backgroundVisible).put("active",active)
         val list=JSONArray();for(layer in layers){val objects=JSONArray();layer.objects.forEach{objects.put(it.json())}
-            list.put(JSONObject().put("id",layer.id).put("name",layer.name).put("visible",layer.visible).put("locked",layer.locked).put("opacity",layer.opacity.toDouble()).put("objects",objects))}
-        return data.put("layers",list).toString().toByteArray(Charsets.UTF_8)
+            list.put(JSONObject().put("groupId",layer.groupId?:JSONObject.NULL).put("id",layer.id).put("name",layer.name).put("visible",layer.visible).put("locked",layer.locked).put("opacity",layer.opacity.toDouble()).put("objects",objects))}
+        return data.put("groups",JSONArray(groups.map{it.json()})).put("layers",list).toString().toByteArray(Charsets.UTF_8)
     }
     fun restore(bytes:ByteArray){
         val other=decode(bytes);require(other.width==width && other.height==height){"Document size changed"}
-        layers=other.layers;active=other.active;background=other.background;backgroundVisible=other.backgroundVisible;nextId=other.nextId
+        layers=other.layers;groups=other.groups;refreshGroups();active=other.active;background=other.background;backgroundVisible=other.backgroundVisible;nextId=other.nextId
     }
-    fun edit(change:()->Unit){val before=encode();try{change();commit(before)}catch(e:Exception){restore(before);throw e}}
+    fun edit(change:()->Unit){val before=encode();try{change();consolidateGroups();refreshGroups();commit(before)}catch(e:Exception){restore(before);throw e}}
     fun commit(before:ByteArray){val after=encode();require(after.size<=MAX_BYTES){"Vector project is too large"}
         require(layers.isNotEmpty() && active in layers.indices){"Invalid Vector layers"}
         require(layers.sumOf{it.objects.size}<=5000 && layers.sumOf{l->l.objects.sumOf{it.points.size}}<=250000){"Vector object/point limit reached"}
@@ -114,16 +123,58 @@ internal class VectorDocument(val width:Int,val height:Int,val dpi:Int=300,var b
             }
         }
         if(before.contentEquals(after))return
-        undo.addLast(Snapshot(before));redo.clear();trim()
+        undo.addLast(Snapshot(before,describe(before,after)));redo.clear();trim()
+    }
+    private fun consolidateGroups(){
+        val selected=layers[active];val pending=layers.toMutableList();layers.clear()
+        while(pending.isNotEmpty()){val first=pending.removeAt(0);layers.add(first);if(first.groupId!=null){val members=pending.filter{it.groupId==first.groupId};layers.addAll(members);pending.removeAll(members.toSet())}}
+        active=layers.indexOf(selected)
+    }
+    fun refreshGroups(){for(layer in layers){val group=groups.firstOrNull{it.id==layer.groupId};layer.groupVisible=group?.visible?:true;layer.groupLocked=group?.locked?:false;if(group==null)layer.groupId=null}}
+    fun createGroup(name:String){require(groups.size<512){"Group limit reached"};val id=nextId();groups.add(VectorGroup(id,name));moveToGroup(layers[active],id)}
+    fun moveToGroup(layer:VectorLayer,id:Long?){
+        val current=layers[active];layers.remove(layer);layer.groupId=id
+        val index=if(id==null)layers.size else (layers.indexOfLast{it.groupId==id}+1).let{if(it==0)layers.size else it}
+        layers.add(index,layer);active=layers.indexOf(current)
+    }
+    fun dragLayer(id:Long,target:Long?,group:Long?,above:Boolean){
+        val layer=layers.firstOrNull{it.id==id}?:return;if(id==target && layer.groupId==group)return
+        require(group==null || groups.any{it.id==group})
+        val original=layers.indexOf(layer);val selected=layers[active];groups.firstOrNull{it.id==group}?.collapsed=false;layers.remove(layer);layer.groupId=group
+        val index=layers.indexOfFirst{it.id==target}
+        val position=if(id==target)original.coerceAtMost(layers.size)else if(index>=0){val other=layers[index].groupId;if(other!=group && other!=null){if(above)layers.indexOfLast{it.groupId==other}+1 else layers.indexOfFirst{it.groupId==other}}else index+if(above)1 else 0}
+            else if(group!=null)(layers.indexOfLast{it.groupId==group}+1).let{if(it==0)layers.size else it}else 0
+        layers.add(position,layer);active=layers.indexOf(selected)
+    }
+    fun ungroup(group:VectorGroup){layers.filter{it.groupId==group.id}.forEach{it.groupId=null};groups.remove(group)}
+    fun translateGroup(group:VectorGroup,x:Int,y:Int){require(!group.locked){"This group is locked"};layers.filter{it.groupId==group.id && !it.locked}.flatMap{it.objects}.forEach{it.matrix.postTranslate(x.toFloat(),y.toFloat())}}
+    private fun describe(before:ByteArray,after:ByteArray):String{
+        val a=JSONObject(before.toString(Charsets.UTF_8));val b=JSONObject(after.toString(Charsets.UTF_8));val al=a.getJSONArray("layers");val bl=b.getJSONArray("layers")
+        if(al.length()!=bl.length())return if(al.length()<bl.length())"Create layer"else"Delete layer"
+        if(a.optJSONArray("groups")?.toString()!=b.optJSONArray("groups")?.toString())return "Edit layer group"
+        if(a.getLong("background")!=b.getLong("background") || a.getBoolean("backgroundVisible")!=b.getBoolean("backgroundVisible"))return "Change background"
+        for(i in 0 until al.length()){
+            val x=al.getJSONObject(i);val y=bl.getJSONObject(i)
+            if(x.getLong("id")!=y.getLong("id") || x.optLong("groupId")!=y.optLong("groupId"))return "Move layer"
+            val xs=x.getJSONArray("objects");val ys=y.getJSONArray("objects")
+            if(xs.length()!=ys.length())return if(xs.length()>ys.length())"Delete object"else if(ys.getJSONObject(ys.length()-1).getString("kind")=="Pen")"Brush stroke"else"Draw shape"
+            for(j in 0 until xs.length()){
+                val old=xs.getJSONObject(j);val next=ys.getJSONObject(j)
+                if(old.getJSONArray("matrix").toString()!=next.getJSONArray("matrix").toString())return "Transform object"
+                if(old.getJSONArray("points").toString()!=next.getJSONArray("points").toString())return "Edit path"
+                if(old.toString()!=next.toString())return "Change object style"
+            }
+            if(x.toString()!=y.toString())return "Change layer settings"
+        };return "Edit artwork"
     }
     private fun trim(){while(undo.size+redo.size>64 || (undo.size+redo.size>30 && undo.sumOf{it.data.size.toLong()}+redo.sumOf{it.data.size.toLong()}>32L*1024*1024)){if(undo.size>1)undo.removeFirst() else if(redo.isNotEmpty())redo.removeFirst() else break}}
-    fun undo():Boolean{if(undo.isEmpty())return false;redo.addLast(Snapshot(encode()));restore(undo.removeLast().read());trim();return true}
-    fun redo():Boolean{if(redo.isEmpty())return false;undo.addLast(Snapshot(encode()));restore(redo.removeLast().read());trim();return true}
+    fun undo():Boolean{if(undo.isEmpty()){historyNotice="Nothing to undo";return false};val item=undo.removeLast();redo.addLast(Snapshot(encode(),item.action));restore(item.read());historyNotice="Undo: ${item.action}";trim();return true}
+    fun redo():Boolean{if(redo.isEmpty()){historyNotice="Nothing to redo";return false};val item=redo.removeLast();undo.addLast(Snapshot(encode(),item.action));restore(item.read());historyNotice="Redo: ${item.action}";trim();return true}
     fun draw(canvas:Canvas,includeBackground:Boolean=true,onlyLayer:VectorLayer?=null){
         if(onlyLayer==null && includeBackground && backgroundVisible)canvas.drawColor(background)
         val paint=Paint(Paint.ANTI_ALIAS_FLAG).apply{strokeCap=Paint.Cap.ROUND;strokeJoin=Paint.Join.ROUND}
         for(layer in if(onlyLayer!=null)listOf(onlyLayer) else layers){
-            if(onlyLayer==null && (!layer.visible || layer.opacity<=0))continue
+            if(onlyLayer==null && (!layer.effectiveVisible || layer.opacity<=0))continue
             val save=if(onlyLayer==null && layer.opacity<1f)canvas.saveLayerAlpha(RectF(0f,0f,width.toFloat(),height.toFloat()),(layer.opacity*255).roundToInt()) else canvas.save()
             for(obj in layer.objects)drawObject(canvas,obj,paint)
             canvas.restoreToCount(save)
@@ -138,7 +189,7 @@ internal class VectorDocument(val width:Int,val height:Int,val dpi:Int=300,var b
         fun color(c:Int)="#"+Integer.toHexString(c and 0xffffff).padStart(6,'0')
         val out=StringBuilder("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"${width}px\" height=\"${height}px\" viewBox=\"0 0 $width $height\" color-interpolation=\"sRGB\">\n")
         out.append("<g id=\"background\"${if(backgroundVisible)"" else " display=\"none\""}><rect width=\"$width\" height=\"$height\" fill=\"${color(background)}\" fill-opacity=\"${Color.alpha(background)/255f}\"/></g>\n")
-        for(layer in layers){out.append("<g id=\"layer-${layer.id}\" opacity=\"${layer.opacity}\"${if(layer.visible)"" else " display=\"none\""}><title>${esc(layer.name)}</title>\n")
+        for(layer in layers){out.append("<g id=\"layer-${layer.id}\" opacity=\"${layer.opacity}\"${if(layer.effectiveVisible)"" else " display=\"none\""}><title>${esc(layer.name)}</title>\n")
             for(obj in layer.objects){val m=FloatArray(9);obj.matrix.getValues(m)
                 val attrs="id=\"object-${obj.id}\" transform=\"matrix(${m[0]} ${m[3]} ${m[1]} ${m[4]} ${m[2]} ${m[5]})\" stroke=\"${color(obj.stroke)}\" stroke-opacity=\"${Color.alpha(obj.stroke)/255f}\" stroke-width=\"${obj.width}\" stroke-linecap=\"round\" stroke-linejoin=\"round\" fill=\"${obj.fill?.let{color(it)}?:"none"}\" fill-opacity=\"${obj.fill?.let{Color.alpha(it)/255f}?:1f}\""
                 val a=obj.points.first();val b=obj.points.last()
@@ -167,7 +218,7 @@ internal class VectorDocument(val width:Int,val height:Int,val dpi:Int=300,var b
                 try{image.getPixels(pixels,0,width,0,0,width,height)}finally{image.recycle()}
                 val r=JSONObject(NativeBridge.importPixels(handle,width,height,pixels));check(!r.has("error")){r.optString("error")}
                 if(index==0){command(JSONObject().put("op","active").put("index",0));command(JSONObject().put("op","delete"))}
-                command(JSONObject().put("op","layer").put("name",layer.name).put("visible",layer.visible).put("locked",layer.locked).put("opacity",layer.opacity.toDouble()))
+                command(JSONObject().put("op","layer").put("name",layer.name).put("visible",layer.effectiveVisible).put("locked",layer.effectiveLocked).put("opacity",layer.opacity.toDouble()))
             }
             val result=JSONObject(NativeBridge.writePsd(handle,file.absolutePath));check(!result.has("error")){result.optString("error")}
         }finally{NativeBridge.destroy(handle)}
@@ -191,6 +242,7 @@ internal class VectorDocument(val width:Int,val height:Int,val dpi:Int=300,var b
             for(i in 0 until list.length()){val l=list.getJSONObject(i);val id=l.getLong("id");require(id in 1 until Long.MAX_VALUE-10000 && ids.add(id));
                 val opacity=number(l.getDouble("opacity"));require(opacity in 0f..1f)
                 val layer=VectorLayer(id,l.getString("name").take(100),l.getBoolean("visible"),l.getBoolean("locked"),opacity)
+                if(!l.isNull("groupId"))layer.groupId=l.getLong("groupId")
                 val os=l.getJSONArray("objects");objects+=os.length();require(objects<=5000)
                 for(j in 0 until os.length()){val o=os.getJSONObject(j);val oid=o.getLong("id");require(oid in 1 until Long.MAX_VALUE-10000 && ids.add(oid));val kind=o.getString("kind");require(kind in listOf("Pen","Bezier","Line","Rectangle","Ellipse"))
                     val xy=o.getJSONArray("points");require(xy.length() in 1..12289 && when(kind){"Pen"->xy.length()<=4096;"Bezier"->xy.length()>=4 && xy.length()%3==1;else->xy.length()==2});points+=xy.length();require(points<=250000)
@@ -201,6 +253,9 @@ internal class VectorDocument(val width:Int,val height:Int,val dpi:Int=300,var b
                     layer.objects.add(VectorObject(oid,kind,coords,o.getLong("stroke").toInt(),if(o.isNull("fill"))null else o.getLong("fill").toInt(),width,matrix,o.optBoolean("closed",false)))
                 };doc.layers.add(layer)
             }
+            val groups=json.optJSONArray("groups")?:JSONArray()
+            for(i in 0 until groups.length()){val g=groups.getJSONObject(i);val id=g.getLong("id");require(id in 1 until Long.MAX_VALUE-10000 && ids.add(id));doc.groups.add(VectorGroup(id,g.getString("name").take(100),g.optBoolean("visible",true),g.optBoolean("locked"),g.optBoolean("collapsed")))}
+            doc.refreshGroups()
             doc.active=json.getInt("active");require(doc.active in doc.layers.indices);doc.nextId=ids.max()+1;return doc
         }
     }

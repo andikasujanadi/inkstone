@@ -4,6 +4,10 @@
 
 Vincentius Bramasta Hartono is the creator and maintainer of Inkstone. Version 0.1.9-preview3 integrates changes by andikasujanadi from PR #1 (commit f19aa0903aed00e6a84bc3e4e86d42cd712f73cc), with local compatibility and regression fixes. Contribution credit does not imply a transfer of copyright. Third-party components retain their own authors and notices.
 
+## Contributor permissions
+
+The [contribution guide](../CONTRIBUTING.md) and [permission checklist](CONTRIBUTOR_PERMISSIONS.md) describe the review needed before accepting future code and before any commercial software distribution. No new CLA, copyright assignment or commercial grant is asserted for existing contributions.
+
 ## Current source
 
 Starting with the licensing-change commit after tag `v0.1.8`, Inkstone-owned code is source-available under the [PolyForm Noncommercial License 1.0.0](../LICENSE), with the [additional artwork-use permission](../ADDITIONAL_PERMISSIONS.md). Source-available means you can inspect the source; this is not an OSI-approved open-source license.

@@ -47,7 +47,7 @@ impl Engine {
     pub(super) fn mask_command(&mut self, v: &Value) -> Result<(), String> {
         let action = v["action"].as_str().unwrap_or("add");
         let l = &self.state.layers[self.state.active];
-        if l.locked {
+        if l.is_locked() {
             return Err("This layer is locked".into());
         }
         if action == "pixels" {

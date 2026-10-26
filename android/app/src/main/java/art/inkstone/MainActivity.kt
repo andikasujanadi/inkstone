@@ -231,6 +231,7 @@ class MainActivity : Activity() {
         }
     }
     private fun configure(s: DrawingSession) {
+        s.onBrushChosen={tool,preset->RecentBrushes(this).record(tool,preset)}
         s.command("historyDirectory",JSONObject().put("path",java.io.File(cacheDir,"undo-history").absolutePath))
         s.setRenderer(prefs.getString("rendererMode","auto")?:"auto")
         s.setSymmetry(prefs.getString("symmetryMode","Off")?:"Off")
@@ -512,7 +513,7 @@ class MainActivity : Activity() {
     override fun onPause() { cancelRecordingShortcut();editor?.canvas?.stylusButtons?.reset();super.onPause(); saveCurrent() }
     override fun onDestroy() { cancelNavigation();pendingExportCleanup?.invoke();pendingExportCleanup=null;pendingExport=null;handler.removeCallbacks(autosave); session?.close(); io.shutdown(); super.onDestroy() }
     @Deprecated("Native back handling")
-    override fun onBackPressed() { if(navigationBusy){cancelNavigation();return};if(canvasSetup!=null){showGallery();return};if(canvasPopup?.isShowing==true){canvasPopup?.dismiss();return}; if(vectorEditor!=null){if(vectorEditor?.dismissPanel()!=true)gallery();return};if (editor != null) { if (!editor!!.dismissPanel()) gallery() } else super.onBackPressed() }
+    override fun onBackPressed() { if(navigationBusy){cancelNavigation();return};if(canvasSetup!=null){showGallery();return};if(canvasPopup?.isShowing==true){canvasPopup?.dismiss();return}; if(vectorEditor!=null){if(vectorEditor?.dismissPanel()!=true)gallery();return};if (editor != null) { if (!editor!!.dismissPanel()) gallery() } else {val gallery=(findViewById<android.view.ViewGroup>(android.R.id.content)?.getChildAt(0) as? GalleryView);if(gallery?.handleBack()!=true)super.onBackPressed()} }
     internal fun recordShortcutKey(event:KeyEvent):Boolean {
         if(recordingShortcutAction==null)return false
         if(event.action!=KeyEvent.ACTION_DOWN)return true

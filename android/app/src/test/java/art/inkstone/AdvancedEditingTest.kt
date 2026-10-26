@@ -76,4 +76,118 @@ class AdvancedEditingTest{
         layout(e,"advanced-warp-before");click(e,"Transform");until{e.canvas.rasterTransform.ready};click(e,"Warp");drag(e,point(e,100f,86.6667f),point(e,116f,86.6667f));layout(e,"advanced-warp-live");val preview=Bitmap.createBitmap(320,240,Bitmap.Config.ARGB_8888);assertTrue(e.canvas.rasterTransform.draw(Canvas(preview)));val previewColor=preview.getPixel(126,100);preview.recycle();val undo=s.info.getInt("undo");click(e,"Done");until{s.info.getInt("undo")==undo+1 && !e.canvas.rasterTransform.displaying};layout(e,"advanced-warp-committed");assertEquals("Warp preview must match the saved geometry",previewColor,pick(s,126,100));val warped=bytes(s);assertFalse(original.contentEquals(warped));command(s,"undo");assertArrayEquals(original,bytes(s));command(s,"redo");assertArrayEquals(warped,bytes(s))
         click(e,"Transform");until{e.canvas.rasterTransform.ready};click(e,"Warp");drag(e,point(e,100f,86.6667f),point(e,105f,89f));click(e,"Cancel");assertArrayEquals(warped,bytes(s));done(c)
     }
+    @Test fun smoothWarpHasContinuousTangentsAndInterpolatesEveryHandle(){
+        val controls=(0..3).flatMap{y->(0..3).map{x->PointF(x*100f,y*100f)}}
+        controls[6].offset(35f,0f)
+        for(y in 0..3)for(x in 0..3){val p=SmoothWarp.point(controls,x.toFloat(),y.toFloat());assertEquals(controls[y*4+x].x,p.x,.001f);assertEquals(controls[y*4+x].y,p.y,.001f)}
+        for(v in listOf(1f,2f)){val a=SmoothWarp.point(controls,2f,v-.001f);val b=SmoothWarp.point(controls,2f,v);val c=SmoothWarp.point(controls,2f,v+.001f);assertEquals((b.x-a.x)/.001f,(c.x-b.x)/.001f,.5f)}
+        assertTrue(SmoothWarp.point(controls,2f,1.5f).x>217f)
+    }
+    @Test fun recentBrushesSurviveReopeningAndCategoryScrollKeepsItsView(){
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get();val e=a.editor!!;val s=e.session
+        a.getSharedPreferences("recent-brushes",0).edit().clear().commit()
+        val chosen=brushPresets.take(4);chosen.forEach{s.choose(it)}
+        assertEquals(chosen.reversed().map{it.name},RecentBrushes(a).list("Paint").map{it.name})
+        s.tool="Erase";s.choose(chosen[0]);assertEquals(1,RecentBrushes(a).list("Erase").size);assertEquals(4,RecentBrushes(a).list("Paint").size);s.tool="Paint"
+        layout(e,"brush-scroll-before");click(e,"Paint");layout(e,"brush-scroll-open")
+        val scroll=e.findViewWithTag<ScrollView>("brush-categories-scroll");scroll.scrollTo(0,160);val before=scroll.scrollY
+        click(e,"Painting");layout(e,"brush-scroll-after");assertSame(scroll,e.findViewWithTag<ScrollView>("brush-categories-scroll"));assertEquals(before,scroll.scrollY)
+        click(e,"Recent");val count=e.findViewWithTag<ScrollView>("brush-presets-scroll").getChildAt(0) as LinearLayout;assertEquals(4,count.childCount)
+        done(c)
+    }
+    @Test fun vectorGroupsPreserveMemberFlagsAcrossSaveUndoAndMovement(){
+        val doc=VectorDocument(320,240);val first=doc.layers[0]
+        first.objects.add(VectorObject(doc.nextId(),"Line",mutableListOf(PointF(20f,20f),PointF(100f,80f)),Color.RED,null,4f))
+        doc.edit{doc.createGroup("Sketch")};val id=doc.groups[0].id
+        val second=VectorLayer(doc.nextId(),"Ink").apply{groupId=id;visible=false};doc.edit{doc.layers.add(second)}
+        doc.edit{doc.groups[0].visible=false;doc.groups[0].locked=true}
+        val restored=VectorDocument.decode(doc.encode());assertFalse(restored.layers[0].effectiveVisible);assertTrue(restored.layers[0].effectiveLocked);assertTrue(restored.layers[0].visible);assertFalse(restored.layers[1].visible)
+        doc.undo();assertTrue(doc.layers[0].effectiveVisible);assertFalse(doc.layers[1].effectiveVisible)
+        val before=doc.layers[0].objects[0].bounds();doc.edit{doc.translateGroup(doc.groups[0],10,15)};val after=doc.layers[0].objects[0].bounds();assertEquals(before.left+10,after.left,.01f);assertEquals(before.top+15,after.top,.01f)
+        doc.undo();assertEquals(before.left,doc.layers[0].objects[0].bounds().left,.01f)
+    }
+
+    @Test fun timedInputReachesNativeFadeAcrossMergedMotionBatches(){
+        fun draw(dt:Float):Int{
+            val handle=NativeBridge.create(800,80)
+            try{
+                NativeBridge.command(handle,JSONObject().put("op","background").put("visible",false).toString())
+                NativeBridge.stroke(handle,0,floatArrayOf(20f,40f,1f,0f,0f),0,Color.RED,28f,1f,1f,0f,0f,0f,150f,5)
+                for(batch in 0..4){val samples=FloatArray(30*5){at->val sample=batch*30+at/5+1;when(at%5){0->20f+sample*5;1->40f;2->1f;3->0f;else->sample*dt}};NativeBridge.stroke(handle,1,samples,0,Color.RED,28f,1f,1f,0f,0f,0f,150f,5)}
+                NativeBridge.stroke(handle,2,floatArrayOf(),0,Color.RED,28f,1f,1f,0f,0f,0f,150f,5)
+                return Color.alpha(JSONObject(NativeBridge.command(handle,JSONObject().put("op","pick").put("x",300).put("y",40).toString())).getLong("color").toInt())
+            }finally{NativeBridge.destroy(handle)}
+        }
+        assertTrue(draw(35f)>draw(2f)+40)
+    }
+
+    @Test fun rasterGroupHeaderCollapsesAndRetainsSavedMembers(){
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get();a.newCanvas(160,120,visible=false);val e=a.editor!!;val s=e.session
+        command(s,"group",JSONObject().put("action","create").put("name","Sketch"));command(s,"add")
+        layout(e,"group-raster-before");click(e,"Layers");until{named(e,"Toggle group Sketch")!=null};layout(e,"group-raster-open")
+        assertNotNull(named(e,"Layer row Layer 1"));click(e,"Toggle group Sketch");until{s.info.getJSONArray("groups").getJSONObject(0).getBoolean("collapsed")};until{named(e,"Layer row Layer 1")==null};layout(e,"group-raster-collapsed")
+        click(e,"Toggle group Sketch");until{named(e,"Layer row Layer 1")!=null}
+        val saved=bytes(s);val handle=NativeBridge.create(16,16);try{val info=JSONObject(NativeBridge.load(handle,saved));assertEquals("Sketch",info.getJSONArray("groups").getJSONObject(0).getString("name"));assertEquals(1L,info.getJSONArray("layers").getJSONObject(1).getLong("groupId"))}finally{NativeBridge.destroy(handle)}
+        done(c)
+    }
+
+    @Test fun layerDragDropsIntoFolderAndBackOutsideWithOneUndoEach(){
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get();a.newCanvas(160,120,visible=false);val e=a.editor!!;val s=e.session
+        command(s,"group",JSONObject().put("action","create").put("name","Sketch"));command(s,"add");command(s,"moveLayer",JSONObject().put("id",2).put("groupId",JSONObject.NULL))
+        layout(e,"drag-layer-before");click(e,"Layers");until{named(e,"Toggle group Sketch")!=null};layout(e,"drag-layer-open")
+        fun event(action:Int,y:Float):DragEvent{
+            val method=DragEvent::class.java.declaredMethods.first{it.name=="obtain" && it.parameterTypes.size>1};method.isAccessible=true;var f=0
+            val args=method.parameterTypes.map{type->when(type){Integer.TYPE->action;java.lang.Float.TYPE->if(f++==0)50f else y;java.lang.Boolean.TYPE->false;Any::class.java->LayerDrag.Token(s,2);else->null}}.toTypedArray()
+            return method.invoke(null,*args) as DragEvent
+        }
+        fun drop(target:View,y:Float=target.height*.5f){for(action in listOf(DragEvent.ACTION_DRAG_STARTED,DragEvent.ACTION_DRAG_ENTERED,DragEvent.ACTION_DROP,DragEvent.ACTION_DRAG_ENDED)){val event=event(action,y);val accepted=target.dispatchDragEvent(event);if(action==DragEvent.ACTION_DRAG_STARTED || action==DragEvent.ACTION_DROP)assertTrue("Drag action $action",accepted)}}
+        val before=s.info.getInt("undo");val heading=named(e,"Toggle group Sketch")!!.parent as View;drop(heading)
+        until{s.info.getInt("undo")==before+1};assertEquals(1L,s.info.getJSONArray("layers").getJSONObject(1).getLong("groupId"));until{named(e,"Layer row Layer 1")!=null};layout(e,"drag-layer-in-group");assertNull(named(e,"Outside groups"))
+        val last=named(e,"Layer row Layer 1")!!;drop(last,last.height*.9f);until{s.info.getInt("undo")==before+2};assertTrue(s.info.getJSONArray("layers").getJSONObject(0).isNull("groupId"));command(s,"undo");assertEquals("Undo: Move layer",s.info.getString("historyNotice"));done(c)
+    }
+    @Test fun guidesRenderIsometricAndPerspectiveAndVanishingPointsDrag(){
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get();a.newCanvas(320,240,visible=false);val e=a.editor!!;val guide=e.canvas.guides
+        guide.enabled=true;guide.mode="Isometric";guide.spacing=50f;layout(e,"isometric-guide")
+        guide.mode="2-point Perspective";guide.editing=true;e.session.tool="Guide";e.refreshTools();layout(e,"perspective-guide-before")
+        val start=guide.points[0].let{point(e,it.x*320,it.y*240)};drag(e,start,point(e,100f,80f));assertEquals(100f/320,guide.points[0].x,.01f);assertEquals(guide.points[0].y,guide.points[1].y,.001f)
+        layout(e,"perspective-guide-after");click(e,"Done");assertFalse(guide.editing);assertEquals("2-point Perspective",DrawingGuide(a).mode)
+        guide.enabled=false;guide.save();done(c)
+    }
+    @Test fun liquifyEditorPushCancelDoneAndNamedUndoUseRealEngine(){
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get();a.newCanvas(320,240,visible=false);val e=a.editor!!;val s=e.session;seed(s);val original=bytes(s);layout(e,"liquify-before")
+        fun open(){click(e,"Adjustments");click(e,"Liquify");command(s,"info");assertEquals("Liquify",s.tool);layout(e,"liquify-open")}
+        val before=s.info.getInt("undo");open();drag(e,point(e,120f,100f),point(e,165f,110f));command(s,"info");assertEquals(before,s.info.getInt("undo"));layout(e,"liquify-push-live");click(e,"Cancel");command(s,"info");assertArrayEquals(original,bytes(s))
+        open();drag(e,point(e,120f,100f),point(e,165f,110f));command(s,"info");click(e,"Done");until{s.info.getInt("undo")==before+1};assertFalse(original.contentEquals(bytes(s)))
+        click(e,"Undo");until{s.info.getInt("undo")==before};assertEquals("Undo: Liquify",s.info.getString("historyNotice"));assertArrayEquals(original,bytes(s));done(c)
+    }
+    @Test fun vectorHistoryNamesShapeCreationAndLayerDragMembership(){
+        val doc=VectorDocument(320,240);doc.edit{doc.layers[0].objects.add(VectorObject(doc.nextId(),"Rectangle",mutableListOf(PointF(10f,10f),PointF(100f,80f)),Color.RED,null,4f))}
+        doc.undo();assertEquals("Undo: Draw shape",doc.historyNotice);doc.redo();assertEquals("Redo: Draw shape",doc.historyNotice)
+        doc.edit{doc.createGroup("Sketch")};val group=doc.groups[0].id;val id=doc.nextId();doc.edit{doc.layers.add(VectorLayer(id,"Ink"));doc.active=1}
+        doc.edit{doc.dragLayer(id,null,group,true)};assertEquals(group,doc.layers[1].groupId);doc.edit{doc.dragLayer(id,null,null,false)};assertNull(doc.layers[0].groupId);doc.undo();assertEquals(group,doc.layers[1].groupId);assertEquals("Undo: Move layer",doc.historyNotice)
+    }
+
+    @Test fun layerDropGlowUsesInsertionEdgesAndFolderBoxAndRowsAnimate(){
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get();val owner=Any();val body=LinearLayout(a).apply{orientation=LinearLayout.VERTICAL;tag="layer-list"};val first=View(a).apply{tag="layer-1"};val second=View(a).apply{tag="layer-2"}
+        body.addView(first,LinearLayout.LayoutParams(300,80));body.addView(second,LinearLayout.LayoutParams(300,80));a.setContentView(body);layout(body,"layer-motion-before")
+        LayerDrag.target(first,owner){_,_,_->};LayerDrag.target(second,owner,folder=true){_,_,_->}
+        fun event(v:View,action:Int,y:Float){val method=DragEvent::class.java.declaredMethods.first{it.name=="obtain" && it.parameterTypes.size>1};method.isAccessible=true;var f=0;val args=method.parameterTypes.map{type->when(type){Integer.TYPE->action;java.lang.Float.TYPE->if(f++==0)50f else y;java.lang.Boolean.TYPE->false;Any::class.java->LayerDrag.Token(owner,1);else->null}}.toTypedArray();v.dispatchDragEvent(method.invoke(null,*args) as DragEvent)}
+        event(first,DragEvent.ACTION_DRAG_STARTED,10f);event(first,DragEvent.ACTION_DRAG_ENTERED,10f);val line=first.foreground as LayerDrag.DropGlow;assertFalse(line.join);assertTrue(line.above)
+        event(first,DragEvent.ACTION_DRAG_LOCATION,70f);assertFalse(line.above);event(first,DragEvent.ACTION_DRAG_ENDED,70f);assertNull(first.foreground)
+        event(second,DragEvent.ACTION_DRAG_STARTED,40f);event(second,DragEvent.ACTION_DRAG_ENTERED,40f);assertTrue((second.foreground as LayerDrag.DropGlow).join);event(second,DragEvent.ACTION_DRAG_ENDED,40f)
+        val motion=LayerDrag.capture(body,owner);body.removeView(second);body.addView(second,0);body.measure(View.MeasureSpec.makeMeasureSpec(1280,View.MeasureSpec.EXACTLY),View.MeasureSpec.makeMeasureSpec(800,View.MeasureSpec.EXACTLY));body.layout(0,0,1280,800);motion.settle(body);body.viewTreeObserver.dispatchOnPreDraw();assertTrue(kotlin.math.abs(first.translationY)>1f)
+        shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(600));assertEquals(0f,first.translationY,.01f)
+        val session=a.session;c.pause().stop().destroy();until{session==null || session.fullyClosed};until{a.io.isTerminated}
+    }
+
+    @Test fun groupedLayerRowsIndentInRasterAndVectorAndReturnToRoot(){
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup();val a=c.get();a.newCanvas(160,120,visible=false);val e=a.editor!!;val s=e.session
+        command(s,"group",JSONObject().put("action","create"));command(s,"add");command(s,"moveLayer",JSONObject().put("id",2).put("groupId",JSONObject.NULL));layout(e,"indent-raster-before");click(e,"Layers");until{named(e,"Layer row Layer 1")!=null};layout(e,"indent-raster-grouped")
+        val grouped=named(e,"Layer row Layer 1")!!;val root=named(e,"Layer row Layer 2")!!;assertEquals(20f,((grouped.layoutParams as LinearLayout.LayoutParams).leftMargin-(root.layoutParams as LinearLayout.LayoutParams).leftMargin).toFloat(),0f)
+        command(s,"moveLayer",JSONObject().put("id",1).put("targetId",1).put("groupId",JSONObject.NULL));click(e,"Layers");click(e,"Layers");until{named(e,"Layer row Layer 1")!=null};layout(e,"indent-raster-root");assertEquals(2,(named(e,"Layer row Layer 1")!!.layoutParams as LinearLayout.LayoutParams).leftMargin)
+        a.newCanvas(160,120,mode="vector");val v=a.vectorEditor!!;val doc=v.document;doc.edit{doc.createGroup("Sketch");doc.layers.add(VectorLayer(doc.nextId(),"Outside"))};v.refresh();layout(v,"indent-vector-before");click(v,"Layers");layout(v,"indent-vector-grouped")
+        val member=v.findViewWithTag<View>("layer-1");assertEquals(20,(member.layoutParams as LinearLayout.LayoutParams).leftMargin);val other=doc.layers.first{it.name=="Outside"};assertEquals(0,(v.findViewWithTag<View>("layer-${other.id}").layoutParams as LinearLayout.LayoutParams).leftMargin)
+        done(c)
+    }
+
 }

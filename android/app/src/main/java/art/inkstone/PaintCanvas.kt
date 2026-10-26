@@ -11,6 +11,8 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 class PaintCanvas(context: Context, val session: DrawingSession) : View(context) {
+    internal val guides=DrawingGuide(context)
+    internal val liquify=RasterLiquify(this,session)
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
     private val transform = Matrix()
     private val inverse = Matrix()
@@ -269,11 +271,8 @@ class PaintCanvas(context: Context, val session: DrawingSession) : View(context)
             canvas.clipPath(Path().apply{addCircle(fillCenter.x,fillCenter.y,radius,Path.Direction.CW)})}
         if(!rasterTransform.draw(canvas))canvas.drawBitmap(session.bitmap, 0f, 0f, paint)
         canvas.restoreToCount(fillSave)
-        if (session.guide) {
-            paint.color = 0x554a92cc; paint.strokeWidth = 1f / zoom
-            var x = 0f; while (x <= w) { canvas.drawLine(x, 0f, x, h, paint); x += 80f }
-            var y = 0f; while (y <= h) { canvas.drawLine(0f, y, w, y, paint); y += 80f }
-        }
+        guides.draw(canvas,w,h,zoom)
+        liquify.draw(canvas,zoom)
         if(session.symmetryMode!="Off"){
             paint.color=0x997fc7ef.toInt();paint.strokeWidth=1.2f*dp/zoom;paint.style=Paint.Style.STROKE
             val mode=session.symmetryMode
@@ -320,6 +319,10 @@ class PaintCanvas(context: Context, val session: DrawingSession) : View(context)
         session.command("pick", JSONObject().put("x", p.x).put("y", p.y)) {
             if (it.has("color")) { session.color = it.getLong("color").toInt(); onColor(session.color); invalidate() }
         }
+    }
+    private fun strokeTimes(event:MotionEvent,includeHistory:Boolean):FloatArray {
+        val history=if(includeHistory)event.historySize else 0
+        return FloatArray(history+1){i->((if(i<history)event.getHistoricalEventTime(i)else event.eventTime)-event.downTime).toFloat()}
     }
     private fun strokeSamples(event: MotionEvent, index: Int, includeHistory: Boolean): FloatArray {
         val samples = mutableListOf<Float>()
@@ -397,8 +400,11 @@ class PaintCanvas(context: Context, val session: DrawingSession) : View(context)
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        if(guides.touch(event,documentPoint(event.x,event.y),session.canvasWidth.toFloat(),session.canvasHeight.toFloat(),32*resources.displayMetrics.density/zoom)){invalidate();return true}
+
         stylusButtons.observe(event)
         val tappedFingers=historyTap.observe(event)
+        if(liquify.touch(event))return true
         if(quickShapeEdit.touch(event))return true
         parent.requestDisallowInterceptTouchEvent(true)
         if(session.tool=="Transform"){
@@ -414,7 +420,7 @@ class PaintCanvas(context: Context, val session: DrawingSession) : View(context)
                 downTime = SystemClock.uptimeMillis(); downX = event.x; downY = event.y; moved = false; multi = false; maxPointers = 1
                 activePointer = event.getPointerId(0); pen = event.getToolType(0) in listOf(MotionEvent.TOOL_TYPE_STYLUS, MotionEvent.TOOL_TYPE_ERASER)
                 onInputDevice(event)
-                if (!pen && session.penOnly && session.tool in listOf("Paint", "Erase", "Smudge")) return true
+                if (!pen && session.penOnly && session.tool in listOf("Paint", "Erase", "Smudge","Liquify")) return true
                 if(session.info.getJSONArray("layers").getJSONObject(session.info.getInt("active")).optBoolean("locked") && session.tool in listOf("Paint","Smudge","Erase","Fill","Transform")){onGesture("Layer is locked");return true}
                 if(pen && stylusButtons.down){
                     if(session.stylusButtonAction in listOf(StylusAction.UNDO,StylusAction.REDO))return true
@@ -431,7 +437,7 @@ class PaintCanvas(context: Context, val session: DrawingSession) : View(context)
                     else -> {
                         drawing = true
                         onStrokeStart()
-                        session.stroke(0, strokeSamples(event, 0, false), erasing(event,0))
+                        session.stroke(0, strokeSamples(event, 0, false), erasing(event,0),strokeTimes(event,false))
                         recordShape(strokeSamples(event,0,false),event.x,event.y)
                         postDelayed(longPress, 550)
                     }
@@ -455,13 +461,13 @@ class PaintCanvas(context: Context, val session: DrawingSession) : View(context)
                 when {
                     picking -> pick(x, y)
                     session.tool == "Select" && selectionShape!="Automatic" -> { selectionPoints.add(documentPoint(x, y)); updateSelectionPath() }
-                    drawing && !snapped -> {val samples=strokeSamples(event,index,true);session.stroke(1,samples,erasing(event,index));recordShape(samples,x,y)}
+                    drawing && !snapped -> {val samples=strokeSamples(event,index,true);session.stroke(1,samples,erasing(event,index),strokeTimes(event,true));recordShape(samples,x,y)}
                 }
             }
             MotionEvent.ACTION_POINTER_UP -> {
                 removeCallbacks(shapeHold)
                 if (pen && drawing && event.getPointerId(event.actionIndex) == activePointer) {
-                    if(snapped)quickShapeEdit.release()else session.stroke(2,strokeSamples(event,event.actionIndex,false),erasing(event,event.actionIndex))
+                    if(snapped)quickShapeEdit.release()else session.stroke(2,strokeSamples(event,event.actionIndex,false),erasing(event,event.actionIndex),strokeTimes(event,false))
                     drawing = false; onChanged()
                 } else if (multi) {
                     if (!checkQuickPinch()) startGesture(event, event.actionIndex)
@@ -473,7 +479,7 @@ class PaintCanvas(context: Context, val session: DrawingSession) : View(context)
                 if (multi) {
                     val pinched = checkQuickPinch()
                     if (!pinched && tappedFingers!=0) {
-                        when (tappedFingers) { 2 -> { if(session.twoFingerUndo){session.command("undo"); onGesture("Undo")} }; 3 -> { if(session.threeFingerRedo){session.command("redo"); onGesture("Redo")} }; 4 -> if(session.fourFingerFullScreen)onToggleInterface() }
+                        when (tappedFingers) { 2 -> { if(session.twoFingerUndo){session.command("undo")} }; 3 -> { if(session.threeFingerRedo){session.command("redo")} }; 4 -> if(session.fourFingerFullScreen)onToggleInterface() }
                         onChanged()
                     }
                 } else if (event.flags and MotionEvent.FLAG_CANCELED != 0) {
@@ -484,7 +490,7 @@ class PaintCanvas(context: Context, val session: DrawingSession) : View(context)
                         val points = JSONArray(); selectionPoints.forEach { points.put(JSONArray().put(it.x).put(it.y)) }
                         session.command("select", JSONObject().put("shape", selectionShape).put("mode",selectionMode).put("points", points)){syncSelection()}; onChanged()
                     }
-                    drawing -> {if(snapped)quickShapeEdit.release()else session.stroke(2,strokeSamples(event,0,false),erasing(event,0));onChanged()}
+                    drawing -> {if(snapped)quickShapeEdit.release()else session.stroke(2,strokeSamples(event,0,false),erasing(event,0),strokeTimes(event,false));onChanged()}
                 }
                 drawing = false; activePointer = -1; multi = false; pickPoint = null; invalidate(); performClick()
             }

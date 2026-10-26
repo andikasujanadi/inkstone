@@ -61,7 +61,7 @@ internal class VectorEditorView(val activity:MainActivity,val document:VectorDoc
         buildToolbar()
         refresh()
     }
-    private fun editableSelection():VectorObject?=canvas.selected?.takeIf{document.owner(it.id)?.locked!=true}
+    private fun editableSelection():VectorObject?=canvas.selected?.takeIf{document.owner(it.id)?.effectiveLocked!=true}
     private fun button(label:String,chosen:Boolean=false,action:()->Unit)=TextView(activity).apply{
         text=label;textSize=13f;setTextColor(if(chosen)StudioColors.accent else Color.WHITE);gravity=Gravity.CENTER
         setPadding(dp(12),0,dp(12),0);contentDescription=label;isSingleLine=true;isClickable=true;isFocusable=true
@@ -112,8 +112,10 @@ internal class VectorEditorView(val activity:MainActivity,val document:VectorDoc
         (hud.layoutParams as? LayoutParams)?.let{it.leftMargin=dp(50);it.topMargin=(rail.top+slider.top+slider.thumbY-dp(102)).roundToInt().coerceIn(dp(barHeight+8),max(dp(barHeight+8),height-dp(168)));hud.layoutParams=it};hud.invalidate()
     }
     fun dismissPanel():Boolean{val old=panel?:return false;panel=null;panelName="";StudioMotion.dismiss(old){removeView(old)};refresh();return true}
+    private var replacingLayerPanel=false
     private fun panel(name:String,left:Boolean=false,body:(LinearLayout)->Unit){
-        if(panelName==name){dismissPanel();return};dismissPanel();canvas.cancelGesture()
+        val old=if(replacingLayerPanel && panelName==name)panel else null
+        if(old==null){if(panelName==name){dismissPanel();return};dismissPanel()};canvas.cancelGesture()
         val content=LinearLayout(activity).apply{orientation=LinearLayout.VERTICAL;setPadding(dp(16),dp(16),dp(16),dp(16));background=android.graphics.drawable.GradientDrawable().apply{setColor(0xf025282c.toInt());cornerRadius=dp(StudioShape.CORNER_DP).toFloat()}}
         val heading=LinearLayout(activity).apply{gravity=Gravity.CENTER_VERTICAL}
         heading.addView(TextView(activity).apply{text=name;textSize=26f;setTextColor(Color.WHITE);setTypeface(null,android.graphics.Typeface.BOLD)},LinearLayout.LayoutParams(0,dp(52),1f))
@@ -121,11 +123,12 @@ internal class VectorEditorView(val activity:MainActivity,val document:VectorDoc
         val items=LinearLayout(activity).apply{orientation=LinearLayout.VERTICAL};body(items)
         content.addView(ScrollView(activity).apply{addView(items)},LinearLayout.LayoutParams(-1,-2))
         val pw=min(dp(430),(width.takeIf{it>0}?:resources.displayMetrics.widthPixels)-dp(56))
+        if(old!=null)removeView(old)
         addView(content,LayoutParams(pw,min(dp(620),max(dp(160),height-dp(barHeight+60))),Gravity.TOP or if(left)Gravity.LEFT else Gravity.RIGHT).apply{topMargin=dp(barHeight);if(left)leftMargin=dp(48) else rightMargin=dp(10)})
-        panel=content;panelName=name;StudioMotion.reveal(content,if(left).15f else .85f);refresh()
+        panel=content;panelName=name;if(old==null)StudioMotion.reveal(content,if(left).15f else .85f);refresh()
     }
     private fun updateNodeControls(){
-        nodeControls.removeAllViews();nodeScroll.visibility=if(canvas.tool=="Nodes" && canvas.selected!=null)VISIBLE else GONE
+        nodeControls.removeAllViews();if(canvas.guides.editing){nodeScroll.visibility=VISIBLE;nodeControls.addView(button("Done editing guides"){canvas.guides.editing=false;canvas.guides.save();canvas.invalidate();refresh()});return};nodeScroll.visibility=if(canvas.tool=="Nodes" && canvas.selected!=null)VISIBLE else GONE
         val obj=canvas.selected?:return;val anchors=VectorGeometry.anchors(obj);val index=anchors.indexOfFirst{it.first==canvas.selectedNode}
         if(obj.kind in listOf("Line","Pen","Bezier"))nodeControls.addView(button(if(canvas.addingAnchor)"Tap path · Cancel" else "+ Anchor"){canvas.addAnchorMode()}.apply{contentDescription="Add anchor";tooltipText="Tap the selected path to add an anchor point"},LinearLayout.LayoutParams(dp(if(canvas.addingAnchor)150 else 106),dp(44)))
         if(obj.kind in listOf("Line","Pen","Bezier")){
@@ -213,7 +216,7 @@ internal class VectorEditorView(val activity:MainActivity,val document:VectorDoc
             .show()
     }
     private fun actions(){panel("Actions",true){body->
-        for((label,action) in listOf<Pair<String,()->Unit>>("Reference image" to {dismissPanel();showReference()},"Import Inkstone / PSD" to {activity.importDocument()},"Stroke settings" to {strokeSettings()},"Object" to {objectActions()},"Fill" to {canvas.fillColor=if(canvas.fillColor==null)canvas.ink else null;canvas.edit{editableSelection()?.takeIf{it.isClosed}?.fill=canvas.fillColor}},"Fit" to {canvas.fit()},"Shortcut keys" to {shortcutSettings()},"Prefs" to {preferences()},"Save artwork" to {save()}))body.addView(button(label){action()},LinearLayout.LayoutParams(-1,dp(48)))
+        for((label,action) in listOf<Pair<String,()->Unit>>("Reference image" to {dismissPanel();showReference()},"Drawing guides" to {canvas.guides.settings(activity,{canvas.invalidate()},{canvas.cancelGesture();dismissPanel();refresh()})},"Import Inkstone / PSD" to {activity.importDocument()},"Stroke settings" to {strokeSettings()},"Object" to {objectActions()},"Fill" to {canvas.fillColor=if(canvas.fillColor==null)canvas.ink else null;canvas.edit{editableSelection()?.takeIf{it.isClosed}?.fill=canvas.fillColor}},"Fit" to {canvas.fit()},"Shortcut keys" to {shortcutSettings()},"Prefs" to {preferences()},"Save artwork" to {save()}))body.addView(button(label){action()},LinearLayout.LayoutParams(-1,dp(48)))
         body.addView(TextView(activity).apply{text="Select an object to move it. Drag a corner to resize, the upper handle to rotate. Nodes selects anchors on the curve. Drag a selected anchor or its white handles; use Previous/Next and Point coordinates for precise edits.";setTextColor(0xffb9c2ca.toInt());setPadding(dp(8),dp(12),dp(8),dp(12))})
     }}
     private fun save(){
@@ -272,31 +275,78 @@ internal class VectorEditorView(val activity:MainActivity,val document:VectorDoc
     }
     private fun layers(){
         canvas.cancelGesture();panel("Layers"){body->
-            body.addView(button("Add layer"){run{canvas.edit{val id=document.nextId();document.layers.add(document.active+1,VectorLayer(id,"Layer $id"));document.active++;canvas.selectedId=null};dismissPanel();layers()}},LinearLayout.LayoutParams(-1,dp(44)))
+            body.tag="layer-list"
+            body.addView(button("Add layer"){run{canvas.edit{val id=document.nextId();document.layers.add(document.active+1,VectorLayer(id,"Layer $id").apply{groupId=document.layers[document.active].groupId});document.active++;canvas.selectedId=null};dismissPanel();layers()}},LinearLayout.LayoutParams(-1,dp(44)))
+            body.addView(button("Create layer group"){activity.textDialog("Group name","New group"){name->canvas.edit{document.createGroup(name)};dismissPanel();layers()}},LinearLayout.LayoutParams(-1,dp(44)))
+            val seen=mutableSetOf<Long>()
+            fun header(group:VectorGroup){
+                val line=LinearLayout(activity).apply{gravity=Gravity.CENTER_VERTICAL}
+                line.addView(button((if(group.collapsed)"▸ "else"▾ ")+group.name){canvas.edit{group.collapsed=!group.collapsed};dismissPanel();layers()},LinearLayout.LayoutParams(0,dp(48),1f))
+                line.addView(button("…"){vectorGroupOptions(group)},LinearLayout.LayoutParams(dp(44),dp(48)))
+                line.addView(CheckBox(activity).apply{isChecked=group.visible;contentDescription=group.name+" group visible";setOnCheckedChangeListener{_,v->canvas.edit{group.visible=v}}},LinearLayout.LayoutParams(dp(44),dp(48)))
+                line.tag="group-${group.id}"
+                LayerDrag.target(line,document,folder=true,open=!group.collapsed,canJoin={source->document.layers.firstOrNull{it.id==source}?.groupId!=group.id}){id,above,join->
+                    val own=document.layers.firstOrNull{it.id==id}?.groupId==group.id
+                    dragVectorLayer(id,if(join)null else document.layers.lastOrNull{it.groupId==group.id}?.id,if(join || (own && !above))group.id else null,if(own && !above)true else above)
+                }
+                body.addView(line)
+            }
             for(layer in document.layers.asReversed()){
+                val group=document.groups.firstOrNull{it.id==layer.groupId}
+                if(group!=null){if(seen.add(group.id))header(group);if(group.collapsed)continue}
                 val row=LinearLayout(activity).apply{gravity=Gravity.CENTER_VERTICAL;setPadding(dp(8),dp(4),dp(8),dp(4));background=android.graphics.drawable.GradientDrawable().apply{setColor(if(document.layers[document.active]===layer)StudioColors.accent else 0x226e7175);cornerRadius=dp(StudioShape.CORNER_DP).toFloat()}}
                 val thumbnail=document.bitmap(72,layer)
                 row.addView(ImageView(activity).apply{setImageBitmap(thumbnail);scaleType=ImageView.ScaleType.FIT_CENTER},LinearLayout.LayoutParams(dp(56),dp(56)))
                 row.addView(button(layer.name){document.active=document.layers.indexOf(layer);canvas.selectedId=null;activity.scheduleSave();dismissPanel();layers()},LinearLayout.LayoutParams(0,dp(56),1f))
                 row.addView(ToolIcon(activity,"Actions"){layerOptions(layer)},LinearLayout.LayoutParams(dp(40),dp(44)))
                 row.addView(CheckBox(activity).apply{isChecked=layer.visible;buttonTintList=android.content.res.ColorStateList.valueOf(Color.WHITE);contentDescription=layer.name+" visible";setOnCheckedChangeListener{_,v->canvas.edit{layer.visible=v}}},LinearLayout.LayoutParams(dp(44),dp(44)))
-                body.addView(row,LinearLayout.LayoutParams(-1,dp(68)).apply{bottomMargin=dp(4)})
+                LayerDrag.source(row,document,layer.id,layer.name)
+                LayerDrag.source(row.getChildAt(1),document,layer.id,layer.name)
+                row.tag="layer-${layer.id}"
+                LayerDrag.target(row,document){id,above,_->val index=document.layers.indexOf(layer);val bottom=layer.groupId!=null && (index==0 || document.layers[index-1].groupId!=layer.groupId);dragVectorLayer(id,layer.id,if(!above && bottom)null else layer.groupId,above)}
+                body.addView(row,LinearLayout.LayoutParams(-1,dp(68)).apply{leftMargin=if(group!=null)dp(20)else 0;bottomMargin=dp(4)})
             }
+            document.groups.filter{seen.add(it.id)}.forEach{header(it)}
             body.addView(button("Background colour"){canvas.edit{document.backgroundVisible=!document.backgroundVisible}},LinearLayout.LayoutParams(-1,dp(48)))
         }
     }
     private fun layerOptions(layer:VectorLayer){
         document.active=document.layers.indexOf(layer);canvas.selectedId=null;refresh()
-        AlertDialog.Builder(activity).setTitle(layer.name).setItems(arrayOf("Rename",if(layer.locked)"Unlock" else "Lock","Opacity","Move up","Move down","Delete layer")){_,op->
+        AlertDialog.Builder(activity).setTitle(layer.name).setItems(arrayOf("Rename",if(layer.locked)"Unlock" else "Lock","Opacity","Move up","Move down","Delete layer","Layer group")){_,op->
             when(op){
                 0->activity.textDialog("Layer name",layer.name){name->canvas.edit{layer.name=name};dismissPanel();layers()}
                 1->canvas.edit{layer.locked=!layer.locked}
                 2->{val seek=SeekBar(activity).apply{max=100;progress=(layer.opacity*100).roundToInt()};AlertDialog.Builder(activity).setTitle("Layer opacity").setView(seek).setPositiveButton("Apply"){_,_->canvas.edit{layer.opacity=seek.progress/100f}}.show()}
                 3->canvas.edit{val i=document.layers.indexOf(layer);if(i<document.layers.lastIndex){document.layers.removeAt(i);document.layers.add(i+1,layer);document.active=i+1}}
                 4->canvas.edit{val i=document.layers.indexOf(layer);if(i>0){document.layers.removeAt(i);document.layers.add(i-1,layer);document.active=i-1}}
+                6->chooseVectorGroup(layer)
                 5->if(document.layers.size>1)canvas.edit{document.layers.remove(layer);document.active=document.active.coerceAtMost(document.layers.lastIndex)}else activity.message("Keep at least one layer")
             };dismissPanel();layers()
         }.setNegativeButton("Done",null).show()
+    }
+    private fun dragVectorLayer(id:Long,target:Long?,group:Long?,above:Boolean){
+        val motion=LayerDrag.capture(this,document);canvas.edit{document.dragLayer(id,target,group,above)}
+        replacingLayerPanel=true;try{layers()}finally{replacingLayerPanel=false};motion.settle(this)
+    }
+    private fun chooseVectorGroup(layer:VectorLayer){
+        val options=listOf("New group","Remove from group")+document.groups.map{it.name}
+        AlertDialog.Builder(activity).setTitle("Layer group").setItems(options.toTypedArray()){_,which->
+            when(which){
+                0->activity.textDialog("Group name","New group"){name->canvas.edit{document.createGroup(name)};dismissPanel();layers()}
+                else->{canvas.edit{document.moveToGroup(layer,if(which==1)null else document.groups[which-2].id)};dismissPanel();layers()}
+            }
+        }.show()
+    }
+    private fun vectorGroupOptions(group:VectorGroup){
+        AlertDialog.Builder(activity).setTitle(group.name).setItems(arrayOf("Rename",if(group.locked)"Unlock group"else"Lock group","Move contents","Ungroup")){_,which->
+            fun finish(){dismissPanel();layers()}
+            when(which){
+                0->activity.textDialog("Group name",group.name){name->canvas.edit{group.name=name};finish()}
+                1->{canvas.edit{group.locked=!group.locked};finish()}
+                2->GroupMoveDialog.show(activity){x,y->canvas.edit{document.translateGroup(group,x,y)};finish()}
+                3->{canvas.edit{document.ungroup(group)};finish()}
+            }
+        }.show()
     }
     private fun preferences(){
         canvas.cancelGesture()

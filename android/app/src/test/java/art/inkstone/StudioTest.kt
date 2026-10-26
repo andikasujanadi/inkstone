@@ -167,7 +167,7 @@ class StudioTest {
         fun touch(action:Int,x:Float,y:Float){val event=MotionEvent.obtain(0,10,action,x,y,0);canvas.dispatchTouchEvent(event);event.recycle()}
         for(i in 0..80){val t=i*2*Math.PI/80;touch(if(i==0)MotionEvent.ACTION_DOWN else MotionEvent.ACTION_MOVE,500+90*kotlin.math.cos(t).toFloat(),350+90*kotlin.math.sin(t).toFloat())}
         shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(700))
-        touch(MotionEvent.ACTION_UP,590f,350f);assertTrue(canvas.quickShapeEdit.released);click(e,"Done");until{session.info.optInt("undo")==1}
+        touch(MotionEvent.ACTION_UP,590f,350f);assertTrue(canvas.quickShapeEdit.released);click(e,"Done");until{session.info.optInt("undo")==1};assertEquals("Shape",session.info.getString("undoAction"))
         render(e,"quick-shape-circle");session.command("undo");until{session.info.optInt("undo")==0}
         a.customCanvas();val setup=checkNotNull(a.canvasSetup)
         render(setup,"custom-canvas-wide",1280,800);click(setup,"Colour profile");click(setup,"Dimensions")

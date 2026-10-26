@@ -10,5 +10,5 @@ export ANDROID_USER_HOME="${ANDROID_USER_HOME:-$ROOT/.toolchain/android-user}"
 export GRADLE_USER_HOME="${GRADLE_USER_HOME:-$ROOT/.toolchain/gradle}"
 ./android/gradlew -p android assembleDebug --no-daemon
 mkdir -p releases
-cp android/app/build/outputs/apk/debug/app-debug.apk releases/inkstone-0.1.9-preview3-debug.apk
-echo "APK: $ROOT/releases/inkstone-0.1.9-preview3-debug.apk"
+cp android/app/build/outputs/apk/debug/app-debug.apk releases/inkstone-0.1.9-preview7-debug.apk
+echo "APK: $ROOT/releases/inkstone-0.1.9-preview7-debug.apk"

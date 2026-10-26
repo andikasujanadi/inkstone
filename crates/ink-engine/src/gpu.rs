@@ -18,6 +18,7 @@ pub struct Params {
     pub region: [u32; 4],
 }
 pub struct Dab {
+    pub brush: super::Brush,
     pub distance:f32,
     pub params: Params,
     pub sample: Sample,
@@ -543,7 +544,7 @@ impl Gpu {
                 0,
                 0,
                 modes.iter().position(|m| *m == layer.blend).unwrap_or(0) as u32,
-                layer.visible as u32,
+                layer.is_visible() as u32,
                 layer.clipping as u32,
                 0,
             ];

@@ -38,17 +38,19 @@ pub extern "system" fn Java_art_inkstone_NativeBridge_command(mut env:JNIEnv,_th
 }
 #[no_mangle]
 pub extern "system" fn Java_art_inkstone_NativeBridge_stroke(env:JNIEnv,_this:JObject,id:jlong,phase:jint,input:JFloatArray,
-    kind:jint,color:jint,size:jfloat,opacity:jfloat,flow:jfloat,stabilization:jfloat,pressure_size:jfloat,pressure_opacity:jfloat,fade_length:jfloat) {
+    kind:jint,color:jint,size:jfloat,opacity:jfloat,flow:jfloat,stabilization:jfloat,pressure_size:jfloat,pressure_opacity:jfloat,fade_length:jfloat,sample_stride:jint) {
     let len=env.get_array_length(&input).unwrap_or(0) as usize;
-    if len>65536 || len%4!=0 {return;}
+    let stride=sample_stride as usize;
+    if !matches!(stride,4|5) || len>65536 || len%stride!=0 {return;}
     let mut values=vec![0f32;len];if env.get_float_array_region(&input,0,&mut values).is_err(){return;}
     let mut guard=engines().lock().unwrap();let Some(e)=guard.get_mut(&id) else{return;};
     if phase==3 {e.cancel();return;}
     let brush=Brush {kind:kind as u8,color:color as u32,size,opacity,flow,stabilization,pressure_size,pressure_opacity,fade_length};
     if phase!=0 && !values.is_empty(){e.update_brush(brush);}
-    for (i,p) in values.chunks_exact(4).enumerate() {
+    for (i,p) in values.chunks_exact(stride).enumerate() {
         let sample=Sample{x:p[0],y:p[1],pressure:p[2],tilt:p[3]};
-        if phase==0 && i==0 {e.begin(sample,brush);} else {e.sample(sample);}
+        if phase==0 && i==0 {e.begin(sample,brush);if stride==5{e.set_sample_time(p[4]);}}
+        else if stride==5{e.sample_timed(sample,p[4]);}else{e.sample(sample);}
     }
     e.flush_gpu();
     if phase==2 {e.end();}

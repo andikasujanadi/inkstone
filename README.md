@@ -6,24 +6,27 @@ Inkstone is a source-available drawing app for Android tablets and pressure-sens
 
 ![Inkstone tablet editor](artifacts/editor-tablet.png)
 
-**0.1.9-preview3 early-development release:** expanded Raster selections and Freeform/Uniform/Distort/Warp transforms, a compact toolbar with expandable groups, independent brush settings, configurable keyboard and stylus buttons, pinch-to-fit, panel navigation improvements and live Vector color fixes. Includes the contribution from [andikasujanadi in PR #1](https://github.com/bramastahartono20/inkstone/pull/1). See [preview instructions](docs/LOCAL_PREVIEW_019_3.md).
+**0.1.9-preview7 early-development release:** indented layer folders with animated drag/drop, gallery sorting/tags/named stacks and artwork drops, persistent Recent brushes, Fade refinements, smooth Warp, named Undo/Redo, perspective/isometric guides and basic Raster Liquify. Retains the contribution from [andikasujanadi in PR #1](https://github.com/bramastahartono20/inkstone/pull/1). See [release instructions and limits](docs/LOCAL_PREVIEW_019_7.md).
 
-**Known issues:** Recent only shows one brush, Fade Brush still needs correction based on device feedback, and changing brush categories can replay the category-list scroll. Layer folders/groups are not implemented. These are recorded for later work in [known issues](docs/KNOWN_ISSUES.md).
+**Testing:** local regression/build checks are recorded in [verification](docs/VERIFICATION.md). Physical stylus behavior, Android Vulkan, animation pacing and device-reported Fade behavior still need testing. Current limitations are tracked in [known issues](docs/KNOWN_ISSUES.md).
 
 ## Download
 
-Get the **[0.1.9-preview3 APK](https://github.com/bramastahartono20/inkstone/releases/tag/v0.1.9-preview3)** from GitHub Releases. Requires Android 8.0 or later; ARM64 and x86-64 are included. Enable installation from the app used to open the APK when Android asks.
+Get the **[0.1.9-preview7 APK](https://github.com/bramastahartono20/inkstone/releases/tag/v0.1.9-preview7)** from GitHub Releases. Requires Android 8.0 or later; ARM64 and x86-64 are included. Enable installation from the app used to open the APK when Android asks.
 
 The preview uses package `art.inkstone.preview`. Install over an existing preview to retain local artwork. Artwork lives in app-private storage: export editable `.inkstone` backups before uninstalling or clearing app data. No account, server, internet permission, analytics, or subscription is required.
 
 ## What you can try
 
+- **Organize the gallery:** sort by name or dates, tag/filter artworks, and create named stacks with artwork counts. Hold an artwork and drop it into a stack card or the Drag to destinations. Use ⋯ for artwork options, or Select for bulk tags/stack changes.
+
 - **Draw, smudge and erase:** 47 procedural presets, pressure controls, flow, stabilization and a global pressure toggle. Eraser has the same preset library, inverted previews and separate brush settings. Tap the Eraser icon to select it and open its library; the library's + button opens settings including edge hardness.
 - **ColorDrop:** drag the active color into an enclosed area, pause for the fill preview, then slide left/right to adjust threshold. Release to commit in one Undo step. Color selection includes a wheel, a square picker, hex/RGB values and palettes. In Raster mode, drag the rectangular preview at the top of Colors onto the palette to save it. Open **Palette → + New palette** or **Palettes → New palette** to create a named palette; custom palettes stay saved across artworks and app restarts.
-- **Layers:** add, rename, duplicate, reorder, lock, hide, adjust opacity, use alpha lock/clipping and fifteen blend modes. Swipe left on a layer for actions.
+- **Layers:** add, rename, duplicate, reorder, lock, hide, adjust opacity, use alpha lock/clipping and fifteen blend modes. Indented folders support visibility/lock, collapse and animated layer drag/drop. Drag beyond a folder boundary to leave it. Swipe left on a layer for actions.
 - **Select and transform:** Automatic/freehand/rectangle/ellipse selection, Add/Remove/Invert, Feather, saved selections, clipboard actions, and Freeform/Uniform/Distort/Warp transforms. The compact bottom toolbar groups tools and scrolls horizontally. Corner and edge handles, free rotation, flips and two-finger object transforms are supported. Inserted images enter Transform automatically. Tap Done to apply.
 - **Pen and touch controls:** pen-only input, control palm protection, handedness, hover cursor, canvas-position lock, hold-to-shape fitting and gesture Undo/Redo.
 - **Experimental Vector mode:** choose Vector when creating a canvas. Draw paths and shapes, edit anchors and direction handles, organize layers, and export real SVG. To bend a straight line, select it with Nodes, tap **+ Anchor**, tap between its endpoints, then drag the new point or its handles. Stroke stabilization is in Actions → Stroke settings.
+- **Guides and Liquify:** perspective/isometric overlays with editable vanishing points in both editors; Raster Liquify with Push, Pinch, Expand, Twirl, Restore, Cancel and one-step Undo.
 - **Responsive workspace:** shared Raster/Vector toolbar positions, docked size/opacity controls, portrait history controls, icon tooltips and animated panels.
 
 ### Saving and export
@@ -58,7 +61,7 @@ export JAVA_HOME=/path/to/jdk-21
 bash scripts/build-android.sh
 ```
 
-Output from the current working tree: `releases/inkstone-0.1.9-preview3-debug.apk` (early-development preview). Open `android/` in Android Studio to edit or install on a device. Rebuild native libraries with `bash scripts/build-native.sh` after changing Rust. Preview APKs use debug signing; distribution requires maintaining the same signing certificate for updates.
+Output from the current working tree: `releases/inkstone-0.1.9-preview7-debug.apk` (early-development preview). Open `android/` in Android Studio to edit or install on a device. Rebuild native libraries with `bash scripts/build-native.sh` after changing Rust. Preview APKs use debug signing; distribution requires maintaining the same signing certificate for updates.
 
 ## Verify
 
@@ -84,3 +87,5 @@ Current Inkstone-owned source is available under [PolyForm Noncommercial 1.0.0](
 **Previously published versions through 0.1.8 remain MIT-licensed.** Their original grants cannot be withdrawn by this change; the published APK and source archive retain their existing terms. The new licensing starts with the subsequent licensing-change commit. See [licensing details and version history](docs/LICENSING.md).
 
 Dependencies retain their own licenses. Vector anchor picking includes an MIT-licensed adaptation credited in [third_party/vectorcraft](third_party/vectorcraft/README.md); its notice is included in the APK.
+
+Contribution guidance: [CONTRIBUTING.md](CONTRIBUTING.md).

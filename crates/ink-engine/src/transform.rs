@@ -62,14 +62,17 @@ impl Engine {
         self.resample_transform(target,filter,|x,y|{let z=inv[6]*x+inv[7]*y+inv[8];if z.abs()<1e-6{None}else{Some(((inv[0]*x+inv[1]*y+inv[2])/z,(inv[3]*x+inv[4]*y+inv[5])/z))}})
     }
     pub fn transform_mesh(&mut self,columns:usize,rows:usize,points:&[(f32,f32)],filter:&str)->Result<(),String>{
-        if !(1..=6).contains(&columns) || !(1..=6).contains(&rows) || points.len()!=(columns+1)*(rows+1) || points.iter().any(|(x,y)|!x.is_finite() || !y.is_finite() || x.abs()>1_000_000. || y.abs()>1_000_000.){return Err("Invalid warp grid".into());}
+        if !(1..=32).contains(&columns) || !(1..=32).contains(&rows) || points.len()!=(columns+1)*(rows+1) || points.iter().any(|(x,y)|!x.is_finite() || !y.is_finite() || x.abs()>1_000_000. || y.abs()>1_000_000.){return Err("Invalid warp grid".into());}
         let r=self.transform_bounds(true,self.state.active);if r[2]==0{return Ok(());}
         let mut cells=vec![];let mut orientation=0.;
-        for row in 0..rows{for col in 0..columns{let at=row*(columns+1)+col;let q=[points[at],points[at+1],points[at+columns+2],points[at+columns+1]];let mut sign=0.;for n in 0..4{let a=q[n];let b=q[(n+1)%4];let c=q[(n+2)%4];let cross=(b.0-a.0)*(c.1-b.1)-(b.1-a.1)*(c.0-b.0);if cross.abs()<1e-5 || (sign!=0. && sign!=cross.signum()){return Err("Warp cells must not fold or cross".into());}sign=cross.signum();}if orientation!=0. && sign!=orientation{return Err("Warp cells must share an orientation".into());}orientation=sign;cells.push((col,row,q));}}
+        for row in 0..rows{for col in 0..columns{let at=row*(columns+1)+col;let q=[points[at],points[at+1],points[at+columns+2],points[at+columns+1]];let mut sign=0.;for n in 0..4{let a=q[n];let b=q[(n+1)%4];let c=q[(n+2)%4];let cross=(b.0-a.0)*(c.1-b.1)-(b.1-a.1)*(c.0-b.0);if cross.abs()<1e-5 || (sign!=0. && sign!=cross.signum()){return Err("Warp cells must not fold or cross".into());}sign=cross.signum();}if orientation!=0. && sign!=orientation{return Err("Warp cells must share an orientation".into());}orientation=sign;let bounds=[q.iter().map(|p|p.0).fold(f32::INFINITY,f32::min),q.iter().map(|p|p.1).fold(f32::INFINITY,f32::min),q.iter().map(|p|p.0).fold(f32::NEG_INFINITY,f32::max),q.iter().map(|p|p.1).fold(f32::NEG_INFINITY,f32::max)];cells.push((col,row,q,bounds));}}
         let mut target=[f32::INFINITY,f32::INFINITY,f32::NEG_INFINITY,f32::NEG_INFINITY];for&(x,y)in points{target[0]=target[0].min(x);target[1]=target[1].min(y);target[2]=target[2].max(x);target[3]=target[3].max(y);}
+        let mut scanlines=vec![Vec::new();self.height];
+        for (index,cell) in cells.iter().enumerate(){let bounds=cell.3;let first=bounds[1].floor().clamp(0.,self.height as f32) as usize;let last=(bounds[3].ceil()+1.).clamp(0.,self.height as f32) as usize;for row in &mut scanlines[first..last]{row.push(index);}}
         self.resample_transform(target,filter,|x,y|{
-            for &(col,row,q)in &cells{
-                if x<q.iter().map(|p|p.0).fold(f32::INFINITY,f32::min)-0.001 || x>q.iter().map(|p|p.0).fold(f32::NEG_INFINITY,f32::max)+0.001 || y<q.iter().map(|p|p.1).fold(f32::INFINITY,f32::min)-0.001 || y>q.iter().map(|p|p.1).fold(f32::NEG_INFINITY,f32::max)+0.001{continue;}
+            for &index in &scanlines[y as usize]{
+                let (col,row,q,bounds)=cells[index];
+                if x<bounds[0]-0.001 || x>bounds[2]+0.001 || y<bounds[1]-0.001 || y>bounds[3]+0.001{continue;}
                 let mut u=0.5;let mut v=0.5;
                 for _ in 0..10{let fx=(1.-u)*(1.-v)*q[0].0+u*(1.-v)*q[1].0+u*v*q[2].0+(1.-u)*v*q[3].0-x;let fy=(1.-u)*(1.-v)*q[0].1+u*(1.-v)*q[1].1+u*v*q[2].1+(1.-u)*v*q[3].1-y;
                     let ux=(1.-v)*(q[1].0-q[0].0)+v*(q[2].0-q[3].0);let uy=(1.-v)*(q[1].1-q[0].1)+v*(q[2].1-q[3].1);let vx=(1.-u)*(q[3].0-q[0].0)+u*(q[2].0-q[1].0);let vy=(1.-u)*(q[3].1-q[0].1)+u*(q[2].1-q[1].1);let det=ux*vy-uy*vx;if det.abs()<1e-8{break;}u-=(fx*vy-fy*vx)/det;v-=(fy*ux-fx*uy)/det;if fx.abs()+fy.abs()<0.0001{break;}
