@@ -4,7 +4,7 @@ Inkstone is a source-available drawing app for Android tablets and pressure-sens
 
 **Early development:** features are incomplete, bugs are expected, and more improvements are on the way. Vector mode is experimental. Keep exported backups of important artwork and share device feedback through [Issues](https://github.com/bramastahartono20/inkstone/issues).
 
-![Inkstone tablet editor](artifacts/editor-tablet.png)
+![Inkstone — a drawing studio for Android tablets](artifacts/promotion/01-main.png)
 
 **0.1.9-preview11 early-development release:** Canvas Atlas shares the editor workspace; Multicolor has an integrated dark settings panel with editable swatches, 13 visual tip choices and adjustable color cycles. Adds group blend/opacity, personal brush categories and independent panel sizing. Retains the contribution from [andikasujanadi in PR #1](https://github.com/bramastahartono20/inkstone/pull/1). See [release instructions and limits](docs/LOCAL_PREVIEW_019_11.md).
 
@@ -15,6 +15,16 @@ Inkstone is a source-available drawing app for Android tablets and pressure-sens
 Get the **[0.1.9-preview11 APK](https://github.com/bramastahartono20/inkstone/releases/tag/v0.1.9-preview11)** from GitHub Releases. Requires Android 8.0 or later; ARM64 and x86-64 are included. Enable installation from the app used to open the APK when Android asks.
 
 The preview uses package `art.inkstone.preview`. Install over an existing preview to retain local artwork. Artwork lives in app-private storage: export editable `.inkstone` backups before uninstalling or clearing app data. No account, server, internet permission, analytics, or subscription is required.
+
+## Canvas Atlas and Multicolor
+
+![Canvas Atlas — your ideas, one workspace](artifacts/promotion/02-canvas-atlas.png)
+
+![Select a canvas and draw in place](artifacts/promotion/03-draw-in-place.png)
+
+![Multicolor brushes — make color your own](artifacts/promotion/04-multicolor-brushes.png)
+
+*Promotional illustrations created for preview10, using the Raster editor layout. The current downloadable build is preview11; artwork and UI details in these illustrations are illustrative.*
 
 ## What you can try
 
@@ -49,7 +59,7 @@ The Rust engine uses `wgpu` compute for brush/eraser stamps, smudge and live lay
 
 Canvas area is limited to 16 megapixels, with separate layer and history memory budgets. Large artwork can still consume substantial memory and export slowly. Sustained latency, thermals, pressure calibration and Vulkan driver behavior need further Android device testing. Vector mode currently lacks SVG import, text, boolean operations, gradients, tracing, multi-object selection and pressure-varying strokes. Text, time-lapse and animation are not available. Groups and gallery stacks have one level. Atlas layout, gallery metadata and personal brush libraries stay device-local. Experimental Wet mix is an approximate RYB model; physical pigment and thick-paint simulation are not included. Raster Warp uses a fixed grid; see the preview instructions for its limits.
 
-See [feature status](docs/PARITY.md), [Vector tools](docs/VECTOR_MODE.md), [GPU architecture](docs/GPU.md) and [verification boundaries](docs/VERIFICATION.md). The editor image above is a supplied device screenshot; other framework test images in `artifacts/` are generated locally.
+See [feature status](docs/PARITY.md), [Vector tools](docs/VECTOR_MODE.md), [GPU architecture](docs/GPU.md) and [verification boundaries](docs/VERIFICATION.md). The images above are promotional illustrations. Framework test images in `artifacts/`, including `atlas-multicolor-panel.png`, show locally rendered UI with synthetic test artwork.
 
 ## Build
 
