@@ -8,7 +8,7 @@ import android.widget.*
 import kotlin.math.*
 
 internal class VectorEditorView(val activity:MainActivity,val document:VectorDocument):FrameLayout(activity){
-    val canvas=VectorCanvas(activity,document)
+    val canvas=VectorCanvas(activity,document).apply{onAtlas={activity.showAtlas(true)}}
     private val density=resources.displayMetrics.density
     private fun dp(v:Int)=(v*density).roundToInt()
     private val colorDrop by lazy{VectorColorDropController(this,canvas)}
@@ -216,7 +216,7 @@ internal class VectorEditorView(val activity:MainActivity,val document:VectorDoc
             .show()
     }
     private fun actions(){panel("Actions",true){body->
-        for((label,action) in listOf<Pair<String,()->Unit>>("Reference image" to {dismissPanel();showReference()},"Drawing guides" to {canvas.guides.settings(activity,{canvas.invalidate()},{canvas.cancelGesture();dismissPanel();refresh()})},"Import Inkstone / PSD" to {activity.importDocument()},"Stroke settings" to {strokeSettings()},"Object" to {objectActions()},"Fill" to {canvas.fillColor=if(canvas.fillColor==null)canvas.ink else null;canvas.edit{editableSelection()?.takeIf{it.isClosed}?.fill=canvas.fillColor}},"Fit" to {canvas.fit()},"Shortcut keys" to {shortcutSettings()},"Prefs" to {preferences()},"Save artwork" to {save()}))body.addView(button(label){action()},LinearLayout.LayoutParams(-1,dp(48)))
+        for((label,action) in listOf<Pair<String,()->Unit>>("Canvas Atlas" to {dismissPanel();activity.showAtlas()},"Reference image" to {dismissPanel();showReference()},"Drawing guides" to {canvas.guides.settings(activity,{canvas.invalidate()},{canvas.cancelGesture();dismissPanel();refresh()})},"Import Inkstone / PSD" to {activity.importDocument()},"Stroke settings" to {strokeSettings()},"Object" to {objectActions()},"Fill" to {canvas.fillColor=if(canvas.fillColor==null)canvas.ink else null;canvas.edit{editableSelection()?.takeIf{it.isClosed}?.fill=canvas.fillColor}},"Fit" to {canvas.fit()},"Shortcut keys" to {shortcutSettings()},"Prefs" to {preferences()},"Save artwork" to {save()}))body.addView(button(label){action()},LinearLayout.LayoutParams(-1,dp(48)))
         body.addView(TextView(activity).apply{text="Select an object to move it. Drag a corner to resize, the upper handle to rotate. Nodes selects anchors on the curve. Drag a selected anchor or its white handles; use Previous/Next and Point coordinates for precise edits.";setTextColor(0xffb9c2ca.toInt());setPadding(dp(8),dp(12),dp(8),dp(12))})
     }}
     private fun save(){
@@ -281,8 +281,8 @@ internal class VectorEditorView(val activity:MainActivity,val document:VectorDoc
             val seen=mutableSetOf<Long>()
             fun header(group:VectorGroup){
                 val line=LinearLayout(activity).apply{gravity=Gravity.CENTER_VERTICAL}
-                line.addView(button((if(group.collapsed)"▸ "else"▾ ")+group.name){canvas.edit{group.collapsed=!group.collapsed};dismissPanel();layers()},LinearLayout.LayoutParams(0,dp(48),1f))
-                line.addView(button("…"){vectorGroupOptions(group)},LinearLayout.LayoutParams(dp(44),dp(48)))
+                line.addView(button((if(group.collapsed)"▸ "else"▾ ")+group.name+(if(group.opacity<1f)" · ${(group.opacity*100).roundToInt()}%"else"")){canvas.edit{group.collapsed=!group.collapsed};dismissPanel();layers()},LinearLayout.LayoutParams(0,dp(48),1f))
+                line.addView(button(GroupAppearance.label(group.blend)){vectorGroupOptions(group)},LinearLayout.LayoutParams(dp(44),dp(48)))
                 line.addView(CheckBox(activity).apply{isChecked=group.visible;contentDescription=group.name+" group visible";setOnCheckedChangeListener{_,v->canvas.edit{group.visible=v}}},LinearLayout.LayoutParams(dp(44),dp(48)))
                 line.tag="group-${group.id}"
                 LayerDrag.target(line,document,folder=true,open=!group.collapsed,canJoin={source->document.layers.firstOrNull{it.id==source}?.groupId!=group.id}){id,above,join->
@@ -338,13 +338,14 @@ internal class VectorEditorView(val activity:MainActivity,val document:VectorDoc
         }.show()
     }
     private fun vectorGroupOptions(group:VectorGroup){
-        AlertDialog.Builder(activity).setTitle(group.name).setItems(arrayOf("Rename",if(group.locked)"Unlock group"else"Lock group","Move contents","Ungroup")){_,which->
+        AlertDialog.Builder(activity).setTitle(group.name).setItems(arrayOf("Rename",if(group.locked)"Unlock group"else"Lock group","Move contents","Ungroup","Blend & opacity")){_,which->
             fun finish(){dismissPanel();layers()}
             when(which){
                 0->activity.textDialog("Group name",group.name){name->canvas.edit{group.name=name};finish()}
                 1->{canvas.edit{group.locked=!group.locked};finish()}
                 2->GroupMoveDialog.show(activity){x,y->canvas.edit{document.translateGroup(group,x,y)};finish()}
                 3->{canvas.edit{document.ungroup(group)};finish()}
+                4->GroupAppearance.show(activity,group.name,group.blend,group.opacity){mode,opacity->canvas.edit{group.blend=mode;group.opacity=opacity};finish()}
             }
         }.show()
     }

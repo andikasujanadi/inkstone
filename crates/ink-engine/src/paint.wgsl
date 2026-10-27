@@ -4,6 +4,9 @@ struct Params {
     dab: vec4<f32>,
     flags: vec4<u32>,
     region: vec4<u32>,
+    palette:array<vec4<u32>,3>,
+    color_effect:vec4<f32>,
+    direction:vec4<f32>,
 }
 @group(0) @binding(0) var<storage, read_write> pixels: array<u32>;
 @group(0) @binding(1) var<storage, read> selection: array<u32>;
@@ -11,6 +14,24 @@ struct Params {
 @group(0) @binding(3) var<storage, read_write> tip: array<u32>;
 @group(0) @binding(4) var<storage, read_write> output_pixels: array<u32>;
 fn unpack(c:u32)->vec4<f32>{return vec4<f32>(f32((c>>16u)&255u),f32((c>>8u)&255u),f32(c&255u),f32(c>>24u))/255.0;}
+fn strand_color(base:u32,delta:vec2<f32>,radius:f32)->vec4<f32>{
+ let effect=p.color_effect;
+ if effect.x==0.0{return unpack(base);}
+ let lateral=dot(delta,vec2(-p.direction.y,p.direction.x))/radius;
+ var across=0.0;
+ if effect.y==1.0{across=lateral*0.5;}
+ if effect.y==2.0{across=floor((lateral+1.0)*8.0)/16.0;}
+ let t=fract(effect.z+across);
+ if effect.x==2.0 && effect.w>=2.0{
+  let pos=t*effect.w;let ai=u32(pos)%u32(effect.w);let bi=(ai+1u)%u32(effect.w);
+  let a=unpack(p.palette[ai/4u][ai%4u]);let b=unpack(p.palette[bi/4u][bi%4u]);
+  return vec4(mix(a.rgb,b.rgb,fract(pos)),unpack(base).a);
+ }
+ if effect.x==2.0{return unpack(base);}
+ let h=t*6.0;let x=1.0-abs(h%2.0-1.0);var rgb=vec3(1.0,0.0,x);
+ switch u32(h){case 0u:{rgb=vec3(1.0,x,0.0);}case 1u:{rgb=vec3(x,1.0,0.0);}case 2u:{rgb=vec3(0.0,1.0,x);}case 3u:{rgb=vec3(0.0,x,1.0);}case 4u:{rgb=vec3(x,0.0,1.0);}default:{}}
+ return vec4(rgb,unpack(base).a);
+}
 fn pack(c:vec4<f32>)->u32{let v=vec4<u32>(clamp(c,vec4(0.0),vec4(1.0))*255.0+0.5);return(v.w<<24u)|(v.x<<16u)|(v.y<<8u)|v.z;}
 fn mix_rgba(a:u32,b:u32,t:f32)->u32{
  let av=unpack(a);let bv=unpack(b);let aa=av.w*(1.0-t);let ba=bv.w*t;let alpha=aa+ba;
@@ -43,21 +64,24 @@ fn sample_tip(pos:vec2<f32>)->u32{
  let smudging=p.canvas.z==6u || p.canvas.z>=128u;var shape=p.canvas.z;if(smudging){shape=select(2u,p.canvas.z&127u,p.canvas.z>=128u);}
  if(p.canvas.z>=64u && p.canvas.z<=78u){shape=p.canvas.z-64u;}
  var texture=1.0;
+ let tip=select(delta,vec2(dot(delta,vec2(-p.direction.y,p.direction.x)),dot(delta,p.direction.xy)),p.color_effect.x>0.0 && p.color_effect.y>0.0);
  switch(shape){
  case 1u:{texture=0.16+noise(xy.x,xy.y,91u)*0.58;}
  case 2u:{texture=max(exp(-4.0*d*d)-exp(-4.0),0.0)/(1.0-exp(-4.0))*0.12;}
  case 8u,9u:{let hard=select(0.35,0.7,shape==9u);let t=clamp((1.0-d)/(1.0-hard),0.0,1.0);texture=t*t*(3.0-2.0*t)*0.18;}
  case 10u:{texture=select(0.0,0.65*max(1.0-d,0.0),noise(xy.x,xy.y,p.flags.y)>0.965);}
- case 11u:{texture=select(0.0,0.12+abs(sin(delta.x*1.7))*0.4,abs(delta.y)<radius*0.55);}
- case 12u:{texture=select(0.0,0.2,abs(delta.y)<radius*0.48);}
+ case 11u:{texture=select(0.0,0.12+abs(sin(tip.x*1.7))*0.4,abs(tip.y)<radius*0.55);}
+ case 12u:{texture=select(0.0,0.2,abs(tip.y)<radius*0.48);}
  case 13u:{texture=pow(noise(xy.x,xy.y,19u),2.0)*0.38;}
  case 14u:{texture=(0.1+noise(xy.x,xy.y,73u)*0.3)*max(1.0-d*d,0.0);}
  case 3u:{texture=pow(noise(xy.x,xy.y,p.flags.y/15u),1.8)*0.7;}
  case 4u:{texture=pow(max(1.0-d*d,0.0),2.0)*0.10;}
- case 7u:{texture=select(0.0,0.85,abs(delta.x)<radius*0.32);}
+ case 7u:{texture=select(0.0,0.85,abs(select(delta.x,tip.y,p.color_effect.x>0.0 && p.color_effect.y>0.0))<radius*0.32);}
  default:{}
  }
  if(shape>=16u && shape<=31u){let hard=f32(shape-16u)/15.0*0.95;let t=clamp((1.0-d)/(1.0-hard),0.0,1.0);texture=t*t*(3.0-2.0*t);}
+ if p.color_effect.x>0.0 && p.color_effect.y==2.0{let lateral=dot(delta,vec2(-p.direction.y,p.direction.x))/radius;texture*=0.52+0.48*abs(sin(lateral*37.0));}
+ let ink=pack(strand_color(p.flags.x,delta,radius));
  var hardness=1.0;
  if(p.canvas.z>=64u && p.canvas.z<=78u && (p.flags.x&255u)<255u){let hard=f32(p.flags.x&255u)/255.0*0.95;let t=clamp((1.0-d)/(1.0-hard),0.0,1.0);hardness=t*t*(3.0-2.0*t);}
  var coverage=1.0;if(p.flags.z!=0u){coverage=f32(selection[i])/255.0;}
@@ -72,8 +96,8 @@ fn sample_tip(pos:vec2<f32>)->u32{
   }
   let c=mix_rgba(dst,carried,clamp(p.dab.w*mask*0.32*coverage,0.0,1.0));pixels[i]=select(c,(c&0xffffffu)|(dst&0xff000000u),lock);
  }else if(p.canvas.z==5u || (p.canvas.z>=16u && p.canvas.z<=31u) || (p.canvas.z>=64u && p.canvas.z<=78u)){if(!lock){pixels[i]=(dst&0xffffffu)|(u32(f32(dst>>24u)*(1.0-alpha)+0.5)<<24u);}}
- else if(lock){if(dst>>24u!=0u){pixels[i]=(over(dst|0xff000000u,p.flags.x|0xff000000u,alpha)&0xffffffu)|(dst&0xff000000u);}}
- else{pixels[i]=over(dst,p.flags.x,alpha);}
+ else if(lock){if(dst>>24u!=0u){pixels[i]=(over(dst|0xff000000u,ink|0xff000000u,alpha)&0xffffffu)|(dst&0xff000000u);}}
+ else{pixels[i]=over(dst,ink,alpha);}
 }
 @compute @workgroup_size(8,8) fn gather(@builtin(global_invocation_id) id:vec3<u32>){
  if(any(id.xy>=p.region.zw)){return;}let xy=p.region.xy+id.xy;output_pixels[id.y*p.region.z+id.x]=pixels[xy.y*p.canvas.x+xy.x];

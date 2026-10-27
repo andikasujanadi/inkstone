@@ -107,4 +107,16 @@ class ContributionIntegrationTest {
         gesture();assertEquals(locked.x,canvas.transformViewPoint(100f,100f).x,.01f);close(c)
     }
 
+    @Test fun reusedPanelsKeepTheirOwnWidthAcrossLibraryLayerAndSettingsSwitches(){
+        val c=Robolectric.buildActivity(MainActivity::class.java).setup();val e=c.get().editor!!;layout(e)
+        fun awaitPanel(key:String):View{val end=System.nanoTime()+20_000_000_000;while(System.nanoTime()<end){shadowOf(Looper.getMainLooper()).idle();val view=e.findViewWithTag<View>("tool-panel");if(e.panelKey==key && view!=null)return view;Thread.sleep(10)};error("Missing panel $key")}
+        click(e,"Layers");val panel=awaitPanel("Layers");layout(e);assertEquals(350,panel.width)
+        for((tool,width) in listOf("Paint" to 450,"Erase" to 450,"Layers" to 350,"Smudge" to 450,"Color" to 350,"Paint" to 450,"Layers" to 350)){
+            click(e,tool);awaitPanel(if(tool=="Layers")"Layers"else if(tool=="Color")"Colors"else"Brushes");layout(e);assertSame(panel,e.findViewWithTag<View>("tool-panel"));assertEquals("Wrong width after $tool",width,panel.width);assertEquals(12,(panel.layoutParams as FrameLayout.LayoutParams).rightMargin)
+        }
+        click(e,"Actions");val left=awaitPanel("Actions");layout(e);assertEquals(390,left.width)
+        click(e,"Prefs");click(e,"Pressure and Smoothing");layout(e);assertSame(left,e.findViewWithTag<View>("tool-panel"));assertEquals(android.view.Gravity.LEFT,(left.layoutParams as FrameLayout.LayoutParams).gravity and android.view.Gravity.HORIZONTAL_GRAVITY_MASK)
+        close(c)
+    }
+
 }

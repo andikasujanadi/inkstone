@@ -64,7 +64,7 @@ internal class ColorDropController(
             else->true
         }
     }}
-    private fun inside():Boolean {val p=canvas.colorDropPoint(x-canvas.left,y-canvas.top);return y>=canvas.top && p.x>=0&&p.y>=0&&p.x<session.canvasWidth&&p.y<session.canvasHeight}
+    private fun inside():Boolean {if((root.context as? MainActivity)?.atlas?.editing==false)return false;val p=canvas.colorDropPoint(x-canvas.left,y-canvas.top);return y>=canvas.top && p.x>=0&&p.y>=0&&p.x<session.canvasWidth&&p.y<session.canvasHeight}
     private fun beginFill(){
         if(!dragging || filling || !inside())return
         if(session.info.getJSONArray("layers").getJSONObject(session.info.getInt("active")).optBoolean("locked")){notice("Layer is locked");return}

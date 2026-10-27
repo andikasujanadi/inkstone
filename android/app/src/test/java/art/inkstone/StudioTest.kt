@@ -443,7 +443,7 @@ class StudioTest {
         render(e,"feedback2-raster-portrait",400,820)
         assertEquals(88,e.canvas.top);val history=checkNotNull(named(e,"History and save"));assertTrue(history.top>700)
         RuntimeEnvironment.setQualifiers("w1280dp-h800dp-land-mdpi");controller.configurationChange();render(e,"feedback2-raster-rotated",1280,800);assertEquals(44,e.canvas.top);assertEquals(0,checkNotNull(named(e,"History and save")).top)
-        click(e,"Erase");click(e,"Add");click(e,"Edge hardness");assertNotNull(named(e,"Hardness"));click(e,"Soft");assertEquals(0f,s.eraserHardness,0f)
+        click(e,"Erase");click(e,"Add");org.robolectric.shadows.ShadowAlertDialog.getLatestAlertDialog().let{dialog->dialog.listView.performItemClick(dialog.listView.getChildAt(0),0,0)};shadowOf(Looper.getMainLooper()).idle();click(e,"Edge hardness");assertNotNull(named(e,"Hardness"));click(e,"Soft");assertEquals(0f,s.eraserHardness,0f)
         render(e,"feedback2-eraser");e.dismissPanel()
         val image=Bitmap.createBitmap(30,20,Bitmap.Config.ARGB_8888).apply{eraseColor(0xffef8040.toInt())};var imported=false
         s.import(image){e.startLayerTransform();imported=true};image.recycle();until{imported};assertEquals("Transform",s.tool)

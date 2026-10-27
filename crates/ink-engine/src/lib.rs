@@ -4,6 +4,7 @@ use std::sync::Arc;
 mod transform;
 mod groups;
 mod liquify;
+mod brush_color;
 use groups::LayerGroup;
 mod selection;
 mod gpu;
@@ -96,8 +97,8 @@ fn dab_spacing(brush: Brush) -> f32 {
 }
 
 #[derive(Clone,Copy)]
-struct RecordedStamp {sample:Sample,brush:Brush,distance:f32}
-struct Stroke { mask_before:Option<Arc<Vec<u8>>>, rect: [usize; 4], before: Vec<u32>, layer: usize, last: Sample, filtered: Sample, brush: Brush, seed: u32, smudge: Option<Vec<u32>>, pending: Vec<gpu::Dab>, gpu_paint: bool, distance_to_dab: f32, distance:f32, stamp_distance:f32,records:Vec<RecordedStamp>, replay_end:Option<f32>, input_time:Option<f32>, input_position:(f32,f32), speed:f32, moving:bool }
+struct RecordedStamp {direction:[f32;2],sample:Sample,brush:Brush,distance:f32}
+struct Stroke {direction:[f32;2], effects:brush_color::BrushColor, mask_before:Option<Arc<Vec<u8>>>, rect: [usize; 4], before: Vec<u32>, layer: usize, last: Sample, filtered: Sample, brush: Brush, seed: u32, smudge: Option<Vec<u32>>, pending: Vec<gpu::Dab>, gpu_paint: bool, distance_to_dab: f32, distance:f32, stamp_distance:f32,records:Vec<RecordedStamp>, replay_end:Option<f32>, input_time:Option<f32>, input_position:(f32,f32), speed:f32, moving:bool }
 
 pub struct Engine {
     gpu: Option<gpu::Gpu>,
@@ -110,6 +111,7 @@ pub struct Engine {
     next_id: u32,
     mask_edit: bool,
     symmetry: String,
+    brush_color:brush_color::BrushColor,
     empty_pixels: Arc<Vec<u32>>,
     input_error: Option<String>,
     history_directory: std::path::PathBuf,
@@ -177,7 +179,7 @@ impl Engine {
         Ok(Self { gpu: None, renderer_requested: "cpu".into(), renderer_error: None, width, height, dpi:300, state: State { groups:vec![],layers: vec![Layer {group_id:None,group_visible:true,group_locked:false,
             id: 1, name: "Layer 1".into(), visible: true, opacity: 1.0, blend: "Normal".into(),
             alpha_lock: false, locked:false, clipping: false, mask:None,mask_enabled:true,pixels: empty_pixels.clone(),
-        }], active: 0, background: 0xfffaf9f6, background_visible: true }, next_id: 2,mask_edit:false,symmetry:"Off".into(),
+        }], active: 0, background: 0xfffaf9f6, background_visible: true }, next_id: 2,mask_edit:false,brush_color:brush_color::BrushColor::default(),symmetry:"Off".into(),
             empty_pixels,input_error:None,history_directory:std::env::temp_dir(),history_error:None,undo: vec![], redo: vec![],undo_names:vec![],redo_names:vec![],action_name:"Edit artwork".into(),history_notice:String::new(), stroke: None,liquify:None, flood_preview: None, selection: None,selection_alpha:None,selection_base:None,selection_version:0,saved_selections:std::collections::BTreeMap::new(),clipboard:None, dirty: true, damage: None })
     }
 
@@ -312,8 +314,8 @@ impl Engine {
         brush=Self::normalize_brush(brush);
         let mask_before=if self.mask_edit {self.state.layers[self.state.active].mask.clone()}else{None};
         if mask_before.is_some() && (brush.kind==6 || brush.kind>=128){return;}
-        let mut stroke = Stroke {mask_before:mask_before.clone(), rect: [self.width,self.height,0,0], before: if mask_before.is_some(){Vec::new()}else{self.state.layers[self.state.active].pixels.as_ref().clone()},
-            layer: self.state.active, last: p, filtered: p, brush, seed: 0x736561, smudge: None, pending: Vec::new(), gpu_paint: brush.size>=32.0 && mask_before.is_none(), distance_to_dab: dab_spacing(brush), distance:0.0,stamp_distance:0.0,records:vec![],replay_end:None,input_time:None,input_position:(p.x,p.y),speed:0.0,moving:false };
+        let mut stroke = Stroke {direction:[1.0,0.0],effects:self.brush_color.clone(),mask_before:mask_before.clone(), rect: [self.width,self.height,0,0], before: if mask_before.is_some(){Vec::new()}else{self.state.layers[self.state.active].pixels.as_ref().clone()},
+            layer: self.state.active, last: p, filtered: p, brush, seed: 0x736561, smudge: None, pending: Vec::new(), gpu_paint: brush.size>=32.0 && mask_before.is_none() && self.brush_color.mix==0.0, distance_to_dab: dab_spacing(brush), distance:0.0,stamp_distance:0.0,records:vec![],replay_end:None,input_time:None,input_position:(p.x,p.y),speed:0.0,moving:false };
         if stroke.gpu_paint { if let Some(gpu)=&mut self.gpu { gpu.selection(self.selection.as_deref(),self.selection_alpha.as_deref()); } }
         if brush.fade_length==0.0{self.stamp(p, &mut stroke);}
         self.stroke = Some(stroke);
@@ -349,7 +351,7 @@ impl Engine {
             stroke.filtered = p;
             let a = stroke.last;
             let distance = (p.x - a.x).hypot(p.y - a.y);
-            if distance>0.0001{stroke.moving=true;}
+            if distance>0.0001{stroke.moving=true;stroke.direction=[(p.x-a.x)/distance,(p.y-a.y)/distance];}
             if stroke.records.is_empty() && distance>0.0001{self.stamp(a,&mut stroke);}
             // Preserve spacing across input batches: stationary/high-frequency events add no ink.
             let spacing = dab_spacing(stroke.brush);
@@ -377,7 +379,7 @@ impl Engine {
             stroke.brush.opacity*=coverage;
             stroke.brush.fade_length*=0.65+1.35*fast;
         }
-        if stroke.replay_end.is_none(){stroke.records.push(RecordedStamp{sample:p,brush:stroke.brush,distance:stroke.stamp_distance});}
+        if stroke.replay_end.is_none(){stroke.records.push(RecordedStamp{direction:stroke.direction,sample:p,brush:stroke.brush,distance:stroke.stamp_distance});}
         let mut points=vec![p];
         if stroke.brush.kind<128 && stroke.brush.kind!=6 {
             let x=self.width as f32;let y=self.height as f32;
@@ -395,6 +397,15 @@ impl Engine {
     fn stamp_one(&mut self, p: Sample, stroke: &mut Stroke) {
         if stroke.pending.len() >= gpu::MAX_DABS { self.flush_stroke(stroke); }
         let mut brush = stroke.brush;
+        let multicolor=brush.kind<64 && brush.kind!=5 && brush.kind!=6 && !self.mask_edit && stroke.effects.mode!="Solid" && !stroke.effects.mode.is_empty();
+        let strands=multicolor && stroke.effects.layout>0;
+        if brush.kind<64 && brush.kind!=5 && brush.kind!=6 && !self.mask_edit{
+            brush.color=stroke.effects.color(brush.color,stroke.stamp_distance);
+            if stroke.effects.mix>0.0{
+                let px=p.x.clamp(0.,(self.width-1)as f32)as usize;let py=p.y.clamp(0.,(self.height-1)as f32)as usize;
+                brush.color=brush_color::wet_mix(brush.color,self.state.layers[stroke.layer].pixels[py*self.width+px],stroke.effects.mix);
+            }
+        }
         if brush.fade_length>0.0 {
             if let Some(end)=stroke.replay_end {
                 let fade=((end-stroke.stamp_distance)/brush.fade_length.min(end.max(0.01))).clamp(0.0,1.0);
@@ -420,11 +431,13 @@ impl Engine {
             let smudging=brush.kind==6 || brush.kind>=128;
             let initial=smudging && stroke.smudge.is_none();
             if initial { stroke.smudge=Some(Vec::new()); }
+            let mut palette=[0u32;12];for(i,c)in stroke.effects.palette.iter().enumerate(){palette[i]=*c;}
+            let color_effect=if multicolor{[if stroke.effects.mode=="Palette"{2.0}else{1.0},stroke.effects.layout as f32,stroke.stamp_distance/stroke.effects.cycle.max(20.0),stroke.effects.palette.len() as f32]}else{[0.0;4]};
             stroke.pending.push(gpu::Dab { brush:stroke.brush, sample:p, distance:stroke.stamp_distance, params:gpu::Params {
                 meta:[self.width as u32,self.height as u32,brush.kind as u32,self.state.layers[stroke.layer].alpha_lock as u32],
                 rect:[x0 as u32,y0 as u32,x1 as u32,y1 as u32],
                 dab:[p.x,p.y,radius,brush.opacity*brush.flow*(1.0-brush.pressure_opacity+brush.pressure_opacity*pressure)],
-                flags:[brush.color,stroke.seed,self.selection.is_some() as u32,initial as u32],region:[0;4],
+                flags:[brush.color,stroke.seed,self.selection.is_some() as u32,initial as u32],region:[0;4],palette,color_effect,direction:[stroke.direction[0],stroke.direction[1],0.0,0.0],
             }});
             if !initial { stroke.seed=stroke.seed.wrapping_add(1); }
             return;
@@ -465,22 +478,27 @@ impl Engine {
             let d = dx.hypot(dy) / radius.max(0.1);
             if d > 1.0 + 0.7 / radius { continue; }
             let edge = ((1.0 - d) * radius + 0.5).clamp(0.0, 1.0);
+            let tip_x=if strands{-stroke.direction[1]*dx+stroke.direction[0]*dy}else{dx};
+            let tip_y=if strands{stroke.direction[0]*dx+stroke.direction[1]*dy}else{dy};
             let texture = match shape {
                 1 => { let n = noise(x as u32, y as u32, 91); 0.16 + n * 0.58 },
                 2 => ((-4.0*d*d).exp()-(-4.0f32).exp()).max(0.0)/(1.0-(-4.0f32).exp())*0.12,
                 8 | 9 => {let hard=if shape==8{0.35}else{0.7};let t=((1.0-d)/(1.0-hard)).clamp(0.0,1.0);t*t*(3.0-2.0*t)*0.18},
                 10 => if noise(x as u32,y as u32,stroke.seed)>0.965 {0.65*(1.0-d).max(0.0)}else{0.0},
-                11 => {let strands=(dx*1.7).sin().abs();if dy.abs()<radius*0.55 {0.12+strands*0.4}else{0.0}},
-                12 => if dy.abs()<radius*0.48 {0.2}else{0.0},
+                11 => {let strands=(tip_x*1.7).sin().abs();if tip_y.abs()<radius*0.55 {0.12+strands*0.4}else{0.0}},
+                12 => if tip_y.abs()<radius*0.48 {0.2}else{0.0},
                 13 => noise(x as u32,y as u32,19).powf(2.0)*0.38,
                 14 => (0.1+noise(x as u32,y as u32,73)*0.3)*(1.0-d*d).max(0.0),
                 3 => noise(x as u32, y as u32, stroke.seed / 15).powf(1.8) * 0.7,
                 4 => (1.0-d*d).max(0.0).powf(2.0)*0.10,
                 16..=31 => {let hard=(shape-16) as f32/15.0*0.95;let t=((1.0-d)/(1.0-hard)).clamp(0.0,1.0);t*t*(3.0-2.0*t)},
                 6 => 0.11,
-                7 => if dx.abs() < radius * 0.32 { 0.85 } else { 0.0 },
+                7 => if (if strands{tip_y}else{dx}).abs() < radius * 0.32 { 0.85 } else { 0.0 },
                 _ => 1.0,
             };
+            let texture=if strands && stroke.effects.layout==2{let lateral=(-stroke.direction[1]*dx+stroke.direction[0]*dy)/radius;texture*(0.52+0.48*(lateral*37.0).sin().abs())}else{texture};
+            let color=if strands{let lateral=(-stroke.direction[1]*dx+stroke.direction[0]*dy)/radius;stroke.effects.at(stroke.brush.color,stroke.stamp_distance,lateral)}else{color};
+            let color=if strands && stroke.effects.mix>0.0{brush_color::wet_mix(color,pixels.as_ref().map_or(0,|values|values[idx]),stroke.effects.mix)}else{color};
             let hardness=if (64..=78).contains(&brush.kind) && brush.color&255<255 {
                 let hard=(brush.color&255) as f32/255.0*0.95;
                 let t=((1.0-d)/(1.0-hard)).clamp(0.0,1.0);t*t*(3.0-2.0*t)
@@ -562,8 +580,9 @@ impl Engine {
                 if pending[0].params.flags[3]!=0 {stroke.smudge=None;}
                 let distance=stroke.stamp_distance;
                 let brush=stroke.brush;
-                for dab in pending {stroke.brush=dab.brush;stroke.stamp_distance=dab.distance;self.stamp_one(dab.sample,stroke);}
-                stroke.brush=brush;
+                let direction=stroke.direction;
+                for dab in pending {stroke.direction=[dab.params.direction[0],dab.params.direction[1]];stroke.brush=dab.brush;stroke.stamp_distance=dab.distance;self.stamp_one(dab.sample,stroke);}
+                stroke.direction=direction;stroke.brush=brush;
                 stroke.stamp_distance=distance;
             }
         }
@@ -579,7 +598,7 @@ impl Engine {
                 let records=std::mem::take(&mut s.records);
                 for record in records {
                     if s.brush.kind!=record.brush.kind{self.flush_stroke(&mut s);s.smudge=None;}
-                    s.brush=record.brush;s.stamp_distance=record.distance;self.stamp(record.sample,&mut s);
+                    s.direction=record.direction;s.brush=record.brush;s.stamp_distance=record.distance;self.stamp(record.sample,&mut s);
                 }
                 self.flush_stroke(&mut s);
                 if s.rect[0]<s.rect[2] && s.rect[1]<s.rect[3]{let damage=self.damage.get_or_insert(s.rect);for i in 0..2{damage[i]=damage[i].min(s.rect[i]);damage[i+2]=damage[i+2].max(s.rect[i+2]);}}
@@ -613,12 +632,20 @@ impl Engine {
         let idx = y.min(self.height - 1) * self.width + x.min(self.width - 1);
         let mut c = if background && self.state.background_visible { self.state.background } else { 0 };
         let mut base_alpha = 0.0;
+        let mut group_color=0;let mut isolated:Option<&LayerGroup>=None;
         for l in layers {
+            let next=l.group_id.and_then(|id|self.state.groups.iter().find(|g|g.id==id)).filter(|g|g.blend!="Pass Through" || g.opacity<1.0);
+            if isolated.map(|g|g.id)!=next.map(|g|g.id){
+                if let Some(g)=isolated{c=composite(c,group_color,g.opacity,if g.blend=="Pass Through"{"Normal"}else{&g.blend});}
+                isolated=next;group_color=0;base_alpha=0.0;
+            }
             if !l.clipping { base_alpha = if l.is_visible() { channel(l.pixels[idx], 24)*l.mask_coverage(idx) } else { 0.0 }; }
             if !l.is_visible() { continue; }
             let opacity = l.opacity * l.mask_coverage(idx) * if l.clipping { base_alpha } else { 1.0 };
-            c = composite(c, l.pixels[idx], opacity, &l.blend);
+            if isolated.is_some(){group_color=composite(group_color,l.pixels[idx],opacity,&l.blend);}
+            else{c = composite(c, l.pixels[idx], opacity, &l.blend);}
         }
+        if let Some(g)=isolated{c=composite(c,group_color,g.opacity,if g.blend=="Pass Through"{"Normal"}else{&g.blend});}
         c
     }
 
@@ -648,7 +675,7 @@ impl Engine {
         patch.extend([x0 as i32, y0 as i32, (x1 - x0) as i32, (y1 - y0) as i32]);
         let layers=self.compositing_layers();
         // Tiny patches cost less to composite locally than to submit and read back from the GPU.
-        let gpu_pixels=if !layers.is_empty() && !self.state.layers.iter().any(|l|l.mask.is_some() && l.mask_enabled) && (force || (x1-x0)*(y1-y0)*self.state.layers.len()>=32768) {
+        let gpu_pixels=if !layers.is_empty() && !self.state.groups.iter().any(|g|g.blend!="Pass Through" || g.opacity<1.0) && !self.state.layers.iter().any(|l|l.mask.is_some() && l.mask_enabled) && (force || (x1-x0)*(y1-y0)*self.state.layers.len()>=32768) {
             self.gpu.as_mut().map(|gpu|gpu.composite(&layers,self.width,rect,if self.state.background_visible {self.state.background}else{0}))
         }else{None};
         match gpu_pixels {
@@ -723,6 +750,7 @@ impl Engine {
                 if let Some(b)=v["visible"].as_bool(){self.state.background_visible=b;}
                 self.dirty=true;
             },
+            "brushEffects"=>{self.brush_color=brush_color::BrushColor::parse(v)?;},
             "renderer" => {self.set_renderer(v["mode"].as_str().unwrap_or("auto"))?;},
             "info" => {},
             "historyDirectory" => {let path=v["path"].as_str().ok_or("Missing history directory")?;std::fs::create_dir_all(path).map_err(|e|e.to_string())?;self.history_directory=path.into();},
@@ -1031,7 +1059,7 @@ impl Engine {
         e.dpi=doc.dpi.clamp(1,2400);
         e.next_id=layers.iter().map(|l|l.id).max().unwrap()+1;
         let mut group_ids=std::collections::HashSet::new();
-        if doc.groups.len()>512 || doc.groups.iter().any(|g|g.id==0 || !group_ids.insert(g.id) || g.name.len()>400){return Err("Invalid layer groups".into());}
+        if doc.groups.len()>512 || doc.groups.iter().any(|g|g.id==0 || !group_ids.insert(g.id) || g.name.len()>400 || !g.opacity.is_finite() || !(0.0..=1.0).contains(&g.opacity) || !matches!(g.blend.as_str(),"Pass Through"|"Normal"|"Multiply"|"Screen"|"Overlay"|"Darken"|"Lighten"|"Color Burn"|"Linear Burn"|"Color Dodge"|"Add"|"Soft Light"|"Hard Light"|"Difference"|"Exclusion"|"Subtract")){return Err("Invalid layer groups".into());}
         e.state=State{groups:doc.groups,layers,active:doc.active,background:doc.background,background_visible:doc.background_visible};
         e.refresh_groups();
         Ok(e)

@@ -16,6 +16,9 @@ class PaintCanvas(context: Context, val session: DrawingSession) : View(context)
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
     private val transform = Matrix()
     private val inverse = Matrix()
+    private var gestureStartZoom=1f
+    private var fitScale=1f
+    internal var onAtlas:()->Unit={}
     private var zoom = 1f
     private var rotation = 0f
     private var panX = 0f; private var panY = 0f
@@ -139,12 +142,22 @@ class PaintCanvas(context: Context, val session: DrawingSession) : View(context)
     fun fit() {
         if (width == 0 || height == 0) return
         zoom = min((width - 100 * dp) / session.canvasWidth, (height - 70 * dp) / session.canvasHeight).coerceAtLeast(.02f)
+        fitScale=zoom
         rotation = 0f; panX = 0f; panY = 0f; fitted = true; invalidate()
+    }
+    private var fitFactor=1f
+    internal fun atlasOverview(){fitFactor=.38f;animateFit();fitFactor=1f}
+    internal fun captureAtlas(){updateMatrix();(context as? MainActivity)?.atlas?.capture(transform,width,height)}
+    internal fun setAtlasCamera(matrix:Matrix){
+        fitScale=min((width-100*dp)/session.canvasWidth,(height-70*dp)/session.canvasHeight).coerceAtLeast(.02f)
+        val values=FloatArray(9);matrix.getValues(values);zoom=hypot(values[0],values[3]);rotation=atan2(values[3],values[0])*180f/Math.PI.toFloat()
+        val center=floatArrayOf(session.canvasWidth/2f,session.canvasHeight/2f);matrix.mapPoints(center);panX=center[0]-width/2f;panY=center[1]-height/2f;fitted=true;updateMatrix();invalidate()
     }
     fun animateFit(onEnd: () -> Unit = {}) {
         if (width == 0 || height == 0) return
         fitAnimator?.cancel()
-        val targetZoom = min((width - 100 * dp) / session.canvasWidth, (height - 70 * dp) / session.canvasHeight).coerceAtLeast(.02f)
+        val fittedZoom = min((width - 100 * dp) / session.canvasWidth, (height - 70 * dp) / session.canvasHeight).coerceAtLeast(.02f)
+        val targetZoom=fittedZoom*fitFactor
         val startZoom = zoom
         val startPanX = panX
         val startPanY = panY
@@ -170,7 +183,7 @@ class PaintCanvas(context: Context, val session: DrawingSession) : View(context)
                 override fun onAnimationCancel(animation:android.animation.Animator){cancelled=true}
                 override fun onAnimationEnd(animation: android.animation.Animator) {
                     if(cancelled)return
-                    fit()
+                    zoom=targetZoom;fitScale=fittedZoom;rotation=0f;panX=0f;panY=0f;fitted=true;updateMatrix();invalidate()
                     fitAnimator = null
                     onEnd()
                 }
@@ -210,7 +223,7 @@ class PaintCanvas(context: Context, val session: DrawingSession) : View(context)
     }
     fun deselect() { selectionBitmap?.recycle();selectionBitmap=null;selectionPath = null; selectionPoints.clear(); invalidate() }
     fun zoomBy(factor: Float) { zoom = (zoom * factor).coerceIn(.02f, 30f); invalidate() }
-    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) { if (!fitted || oldw != w || oldh != h) fit() }
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) { val camera=(context as? MainActivity)?.atlas?.pageCamera(w,h);if(camera!=null)setAtlasCamera(camera)else if (!fitted || oldw != w || oldh != h) fit() }
     private fun updateMatrix() {
         session.viewZoom=zoom
         transform.reset(); transform.postTranslate(-session.canvasWidth / 2f, -session.canvasHeight / 2f)
@@ -246,12 +259,16 @@ class PaintCanvas(context: Context, val session: DrawingSession) : View(context)
     }
     fun cancelFillAnimation(){fillAnimator?.cancel();fillAnimator=null;fillBefore?.recycle();fillBefore=null;fillWaiting=false;fillAmount=1f;invalidate()}
     override fun onDraw(canvas: Canvas) {
+        updateMatrix()
+        val atlas=(context as? MainActivity)?.atlas
+        if(atlas!=null)atlas.draw(canvas,transform,width,height)else{
         canvas.drawColor(if (session.lightInterface) 0xffb5b5b5.toInt() else StudioColors.workspace)
         paint.style=Paint.Style.STROKE;paint.strokeWidth=dp*.65f
         paint.color=if(session.lightInterface)0x14000000 else 0x10ffffff
         val spacing=16*dp
         var gx=0f;while(gx<width){canvas.drawLine(gx,0f,gx,height.toFloat(),paint);gx+=spacing}
         var gy=0f;while(gy<height){canvas.drawLine(0f,gy,width.toFloat(),gy,paint);gy+=spacing}
+        }
         updateMatrix(); canvas.save(); canvas.concat(transform)
         paint.color = 0xffe0e0e0.toInt(); paint.style = Paint.Style.FILL; paint.shader = null
         val w = session.canvasWidth.toFloat(); val h = session.canvasHeight.toFloat()
@@ -345,6 +362,7 @@ class PaintCanvas(context: Context, val session: DrawingSession) : View(context)
         val dx = event.getX(b) - event.getX(a); val dy = event.getY(b) - event.getY(a)
         gestureDistance = hypot(dx, dy); gestureAngle = atan2(dy, dx)
         val now = SystemClock.uptimeMillis()
+        gestureStartZoom=zoom
         gestureStartTime = now
         gestureStartDistance = gestureDistance
         gestureLastDistance = gestureDistance
@@ -377,9 +395,12 @@ class PaintCanvas(context: Context, val session: DrawingSession) : View(context)
         rotation += delta * 180f / Math.PI.toFloat()
         updateMatrix(); val mapped = floatArrayOf(anchor.x, anchor.y); transform.mapPoints(mapped)
         panX += x - mapped[0]; panY += y - mapped[1]
+        if(zoom<fitScale*.55f && zoom<gestureStartZoom*.85f)onAtlas()
         gestureX = x; gestureY = y; gestureDistance = distance; gestureAngle = angle; invalidate()
     }
     private fun checkQuickPinch(): Boolean {
+        if((context as? MainActivity)?.atlas!=null){gesturePinching=false;return false}
+        if(gesturePinching && !session.canvasLocked && zoom<fitScale*.48f){gesturePinching=false;onAtlas();return true}
         if (!gesturePinching || !session.pinchToFit || session.canvasLocked) {
             gesturePinching = false
             return false
@@ -391,7 +412,7 @@ class PaintCanvas(context: Context, val session: DrawingSession) : View(context)
         val fastPinch = gesturePinchVelocity > 0.30f * dp && ratio < 0.90f
         val quickContraction = duration in 60..450 && ratio < 0.78f && gesturePinchVelocity > 0.08f * dp
         gesturePinching = false
-        if (fastPinch || quickContraction) {
+        if ((fastPinch || quickContraction) && (zoom>=fitScale*.8f || gestureStartZoom>fitScale*1.1f)) {
             animateFit()
             onGesture("Fit canvas")
             return true
@@ -400,6 +421,8 @@ class PaintCanvas(context: Context, val session: DrawingSession) : View(context)
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        if(event.actionMasked==MotionEvent.ACTION_DOWN){fitAnimator?.cancel();fitAnimator=null}
+        updateMatrix();if((context as? MainActivity)?.atlas?.touch(event,this,transform,::setAtlasCamera)==true)return true
         if(guides.touch(event,documentPoint(event.x,event.y),session.canvasWidth.toFloat(),session.canvasHeight.toFloat(),32*resources.displayMetrics.density/zoom)){invalidate();return true}
 
         stylusButtons.observe(event)

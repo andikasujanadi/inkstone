@@ -422,3 +422,30 @@ fn physical_gpu_fade_start_and_tap_match_cpu(){
     };
     let a=draw(false);let b=draw(true);let error=a.iter().zip(b.iter()).map(|(a,b)|((*a>>24) as i32-(*b>>24) as i32).abs()).max().unwrap();assert!(error<=2,"Fade cap/tap mismatch: {error}");
 }
+
+#[test]
+#[ignore = "Requires a physical Metal or Vulkan adapter"]
+fn physical_gpu_multicolor_and_group_appearance_match_cpu(){
+    let mut gpu=gpu_engine(160,96);let mut cpu=Engine::new(160,96).unwrap();
+    for e in [&mut gpu,&mut cpu]{
+        e.command(&json!({"op":"brushEffects","mode":"Rainbow","cycle":120})).unwrap();
+        e.begin(Sample{x:20.,y:48.,pressure:1.,tilt:0.},Brush{size:40.,pressure_size:0.,stabilization:0.,..Brush::default()});
+        e.sample(Sample{x:140.,y:48.,pressure:1.,tilt:0.});e.end();
+    }
+    let difference=gpu.state.layers[0].pixels.iter().zip(cpu.state.layers[0].pixels.iter()).map(|(a,b)|[0,8,16,24].iter().map(|s|((a>>s&255)as i32-(b>>s&255)as i32).abs()).max().unwrap()).max().unwrap();assert!(difference<=4,"CPU/GPU rainbow difference {difference}");
+    assert!(gpu.info()["gpuBatches"].as_u64().unwrap()>0);
+    for e in [&mut gpu,&mut cpu]{e.command(&json!({"op":"group","action":"create"})).unwrap();e.command(&json!({"op":"group","action":"update","id":1,"opacity":0.4,"blend":"Multiply"})).unwrap();let patch=e.render_patch(true).unwrap();assert!(patch.len()>4);}
+    for (a,b) in gpu.state.layers[0].pixels.iter().zip(cpu.state.layers[0].pixels.iter()){assert!(((a>>24)as i32-(b>>24)as i32).abs()<=4);}
+}
+
+#[test]
+#[ignore = "Requires a physical Metal or Vulkan adapter"]
+fn physical_gpu_across_width_and_bristle_colors_match_cpu(){
+    for layout in ["Across","Bristles"] {for kind in [0,7,11,13]{
+        let mut gpu=gpu_engine(160,112);let mut cpu=Engine::new(160,112).unwrap();
+        for e in [&mut gpu,&mut cpu]{e.command(&json!({"op":"brushEffects","mode":"Palette","layout":layout,"cycle":900,"palette":[0xffdd5454u32,0xffd8be65u32,0xff66ae9bu32,0xff687db9u32]})).unwrap();
+            e.begin(Sample{x:20.,y:30.,pressure:1.,tilt:0.},Brush{kind,size:40.,pressure_size:0.,stabilization:0.,..Brush::default()});e.sample(Sample{x:75.,y:30.,pressure:1.,tilt:0.});e.sample(Sample{x:135.,y:78.,pressure:1.,tilt:0.});e.end();}
+        let total:f64=gpu.state.layers[0].pixels.iter().zip(cpu.state.layers[0].pixels.iter()).map(|(a,b)|[0,8,16,24].iter().map(|s|((a>>s&255)as i32-(b>>s&255)as i32).unsigned_abs()as f64).sum::<f64>()).sum();
+        assert!(total/(160.*112.*4.)<1.5,"Color mismatch {layout} {kind}: {total}");assert!(gpu.info()["gpuBatches"].as_u64().unwrap()>0);
+    }}
+}

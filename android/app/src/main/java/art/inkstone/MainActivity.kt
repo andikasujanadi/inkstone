@@ -63,6 +63,25 @@ class MainActivity : Activity() {
     internal val penOnlyInput get()=prefs.getBoolean("penOnly",false)
     internal val protectVectorControls get()=prefs.getBoolean("protectControls",true)
     internal fun setVectorInputPreference(index:Int,enabled:Boolean){prefs.edit().putBoolean(arrayOf("penOnly","protectControls","twoFingerUndo","threeFingerRedo")[index],enabled).apply()}
+    internal var atlas:CanvasAtlas?=null;private set
+    internal val atlasLinked get()=atlas!=null
+    fun showAtlas(fromGesture:Boolean=false){
+        if(navigationBusy || (editor==null && vectorEditor==null))return
+        editor?.canvas?.finishQuickShape()
+        if(atlas==null){atlas=CanvasAtlas(this);editor?.canvas?.captureAtlas();vectorEditor?.canvas?.captureAtlas()}
+        atlas?.enterOverview()
+        if(!fromGesture){editor?.dismissPanel();vectorEditor?.dismissPanel();editor?.canvas?.atlasOverview();vectorEditor?.canvas?.atlasOverview()}
+        editor?.canvas?.invalidate();vectorEditor?.canvas?.invalidate()
+    }
+    fun activateAtlasArtwork(art:Artwork){
+        val ticket=beginNavigation("Switching canvas…",art.id,compact=true)?:return
+        saveCurrent{saved->
+            if(!currentNavigation(ticket))return@saveCurrent
+            if(!saved){atlas?.switchFailed();finishNavigation(ticket);return@saveCurrent}
+            io.execute{val data=runCatching{store.read(art.id)};runOnUiThread{if(currentNavigation(ticket))data.onSuccess{loadedDocument(it,art.id,art.name,ticket)}.onFailure{navigationFailed(ticket,"Could not open artwork: ${it.message}")}}}
+        }
+    }
+    fun closeAtlas(animated:Boolean=false){atlas?.close();atlas=null;editor?.canvas?.invalidate();vectorEditor?.canvas?.invalidate()}
     var documentId = ""; private set
     var documentName = "Untitled Artwork"
     val io = Executors.newSingleThreadExecutor()
@@ -150,12 +169,12 @@ class MainActivity : Activity() {
     private var navigationSession:DrawingSession?=null
     private var navigationExitView:View?=null
     private fun currentNavigation(ticket:Long)=navigationBusy && navigationGeneration==ticket && !isDestroyed
-    private fun beginNavigation(message:String,artworkId:String?=null):Long?{
+    private fun beginNavigation(message:String,artworkId:String?=null,compact:Boolean=false):Long?{
         if(navigationBusy || isDestroyed)return null
         navigationBusy=true;val ticket=++navigationGeneration;deferAutosave()
         val root=findViewById<ViewGroup>(android.R.id.content)
         (root.getChildAt(0) as? GalleryView)?.setOpening(artworkId)
-        navigationOverlay=NavigationOverlay(this,message).also{root.addView(it,ViewGroup.LayoutParams(-1,-1));it.bringToFront();it.requestFocus()}
+        navigationOverlay=NavigationOverlay(this,message,compact).also{root.addView(it,ViewGroup.LayoutParams(-1,-1));it.bringToFront();it.requestFocus()}
         return ticket
     }
     private fun finishNavigation(ticket:Long){if(!currentNavigation(ticket))return;navigationSession=null;clearNavigation()}
@@ -166,7 +185,7 @@ class MainActivity : Activity() {
         (findViewById<ViewGroup>(android.R.id.content).getChildAt(0) as? GalleryView)?.setOpening(null)
     }
     private fun cancelNavigation(){navigationGeneration++;navigationSession?.close();navigationSession=null;clearNavigation()}
-    private fun navigationFailed(ticket:Long,error:String){if(!currentNavigation(ticket))return;navigationSession?.close();navigationSession=null;finishNavigation(ticket);message(error)}
+    private fun navigationFailed(ticket:Long,error:String){if(!currentNavigation(ticket))return;atlas?.switchFailed();navigationSession?.close();navigationSession=null;finishNavigation(ticket);message(error)}
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -179,7 +198,7 @@ class MainActivity : Activity() {
     }
 
     fun newCanvas(width: Int, height: Int, dpi:Int=300, name:String="Untitled Artwork", background:Int=Color.WHITE, visible:Boolean=true, mode:String="raster") {
-        cancelNavigation()
+        cancelNavigation();closeAtlas()
         if(mode=="vector"){
             runCatching{require(width in 16..8192 && height in 16..8192 && width.toLong()*height<=16_777_216);val doc=VectorDocument(width,height,dpi,background,visible);openVector(doc,store.newId(),name);scheduleSave()}.onFailure{message(it.message?:"Cannot create Vector canvas")};return
         }
@@ -194,7 +213,8 @@ class MainActivity : Activity() {
     private fun openVector(doc:VectorDocument,id:String,name:String){
         session?.close();session=null;editor=null;canvasSetup=null;canvasPopup?.dismiss();canvasPopup=null
         vectorDocument=doc;documentId=id;documentName=name
-        vectorEditor=VectorEditorView(this,doc);setContentView(vectorEditor);vectorEditor?.let{StudioMotion.canvasEnter(it)}
+        atlas?.refresh();atlas?.activateCurrent()
+        vectorEditor=VectorEditorView(this,doc);setContentView(vectorEditor);vectorEditor?.let{if(atlas==null)StudioMotion.canvasEnter(it)}
     }
     private fun loadedDocument(bytes:ByteArray,id:String,name:String,existingTicket:Long?=null){
         val ticket=existingTicket?:beginNavigation("Opening $name…")?:return
@@ -254,13 +274,15 @@ class MainActivity : Activity() {
         s.color = prefs.getInt("color", 0xff202020.toInt())
         fun restoreBrush(b: DrawingSession.ToolBrush, key: String) {
             val name = prefs.getString("${key}_preset", null)
-            if (name != null) brushPresets.find { it.name == name }?.let { b.preset = it }
+            if (name != null) BrushLibrary(this).all().find { it.name == name }?.let { b.preset = it }
             b.size = prefs.getFloat("${key}_size", b.preset.size)
             b.opacity = prefs.getFloat("${key}_opacity", 1f)
             b.flow=prefs.getFloat("${key}_flow",b.preset.flow)
             b.pressureSize=prefs.getFloat("${key}_pressureSize",b.preset.pressureSize)
             b.pressureOpacity=prefs.getFloat("${key}_pressureOpacity",b.preset.pressureOpacity)
             b.fadeLength=prefs.getFloat("${key}_fadeLength",b.preset.fadeLength)
+            b.kind=prefs.getInt("${key}_kind",b.preset.kind).coerceIn(0,14);b.colorLayout=prefs.getString("${key}_layout",b.preset.colorLayout)?:"Along"
+            b.colorMode=prefs.getString("${key}_colorMode",b.preset.colorMode)?:"Solid";b.colorCycle=prefs.getFloat("${key}_cycle",b.preset.colorCycle);b.wetMix=prefs.getFloat("${key}_mix",b.preset.wetMix);b.palette=runCatching{val a=org.json.JSONArray(prefs.getString("${key}_palette",org.json.JSONArray(b.preset.palette).toString()));(0 until a.length().coerceAtMost(12)).map{a.getLong(it).toInt()}}.getOrDefault(b.preset.palette)
         }
         restoreBrush(s.paintBrush, "paint_brush")
         restoreBrush(s.smudgeBrush, "smudge_brush")
@@ -270,6 +292,8 @@ class MainActivity : Activity() {
         val s = session ?: return
         val edit=prefs.edit()
         for((key,b) in listOf("paint_brush" to s.paintBrush,"smudge_brush" to s.smudgeBrush,"erase_brush" to s.eraseBrush)){
+            edit.putInt("${key}_kind",b.kind).putString("${key}_layout",b.colorLayout)
+            edit.putString("${key}_palette",org.json.JSONArray(b.palette).toString()).putString("${key}_colorMode",b.colorMode).putFloat("${key}_cycle",b.colorCycle).putFloat("${key}_mix",b.wetMix)
             edit.putFloat("${key}_flow",b.flow).putFloat("${key}_pressureSize",b.pressureSize).putFloat("${key}_pressureOpacity",b.pressureOpacity).putFloat("${key}_fadeLength",b.fadeLength)
         }
         edit.putString("symmetryMode",s.symmetryMode).putFloat("eraserHardness",s.eraserHardness).putBoolean("penOnly",s.penOnly).putBoolean("protectControls",s.protectControls).putFloat("stabilization",s.stabilization).putString("rendererMode",s.rendererMode).putBoolean("pressureEnabled",s.pressureEnabled).putBoolean("canvasLocked",s.canvasLocked).putBoolean("quickShape",s.quickShape).putString("cursorStyle",s.cursorStyle).putFloat("cursorOpacity",s.cursorOpacity)
@@ -286,8 +310,9 @@ class MainActivity : Activity() {
     }
     private fun openEditor() {
         val s = session ?: return
+        atlas?.refresh();atlas?.activateCurrent()
         editor = EditorView(this, s)
-        setContentView(editor);editor?.let{StudioMotion.canvasEnter(it)}; s.requestRender()
+        setContentView(editor);editor?.let{if(atlas==null)StudioMotion.canvasEnter(it)}; s.requestRender()
     }
     fun deferAutosave(){handler.removeCallbacks(autosave)}
     fun scheduleSave() { handler.removeCallbacks(autosave); handler.postDelayed(autosave, 1800) }
@@ -316,6 +341,7 @@ class MainActivity : Activity() {
         }
     }
     fun showGallery() {
+        closeAtlas()
         cancelNavigation()
         canvasSetup=null;canvasPopup?.dismiss();canvasPopup=null
         session?.close(); session = null
@@ -511,9 +537,9 @@ class MainActivity : Activity() {
     fun message(text: String) { if (!isDestroyed) Toast.makeText(this, text, Toast.LENGTH_LONG).show() }
     override fun onWindowFocusChanged(hasFocus:Boolean){super.onWindowFocusChanged(hasFocus);if(!hasFocus)editor?.canvas?.stylusButtons?.reset()}
     override fun onPause() { cancelRecordingShortcut();editor?.canvas?.stylusButtons?.reset();super.onPause(); saveCurrent() }
-    override fun onDestroy() { cancelNavigation();pendingExportCleanup?.invoke();pendingExportCleanup=null;pendingExport=null;handler.removeCallbacks(autosave); session?.close(); io.shutdown(); super.onDestroy() }
+    override fun onDestroy() { closeAtlas();cancelNavigation();pendingExportCleanup?.invoke();pendingExportCleanup=null;pendingExport=null;handler.removeCallbacks(autosave); session?.close(); io.shutdown(); super.onDestroy() }
     @Deprecated("Native back handling")
-    override fun onBackPressed() { if(navigationBusy){cancelNavigation();return};if(canvasSetup!=null){showGallery();return};if(canvasPopup?.isShowing==true){canvasPopup?.dismiss();return}; if(vectorEditor!=null){if(vectorEditor?.dismissPanel()!=true)gallery();return};if (editor != null) { if (!editor!!.dismissPanel()) gallery() } else {val gallery=(findViewById<android.view.ViewGroup>(android.R.id.content)?.getChildAt(0) as? GalleryView);if(gallery?.handleBack()!=true)super.onBackPressed()} }
+    override fun onBackPressed() { if(navigationBusy){cancelNavigation();return};if(atlas!=null){closeAtlas(true);editor?.canvas?.animateFit();vectorEditor?.canvas?.fit();return};if(canvasSetup!=null){showGallery();return};if(canvasPopup?.isShowing==true){canvasPopup?.dismiss();return}; if(vectorEditor!=null){if(vectorEditor?.dismissPanel()!=true)gallery();return};if (editor != null) { if (!editor!!.dismissPanel()) gallery() } else {val gallery=(findViewById<android.view.ViewGroup>(android.R.id.content)?.getChildAt(0) as? GalleryView);if(gallery?.handleBack()!=true)super.onBackPressed()} }
     internal fun recordShortcutKey(event:KeyEvent):Boolean {
         if(recordingShortcutAction==null)return false
         if(event.action!=KeyEvent.ACTION_DOWN)return true
@@ -547,11 +573,12 @@ class MainActivity : Activity() {
     }
     override fun dispatchKeyEvent(event:KeyEvent):Boolean {
         if(recordShortcutKey(event))return true
-        if(editor?.canvas?.stylusButtons?.key(event)==true){lastInputDescription="Stylus key ${event.keyCode}, action ${event.action}, source ${event.source}";return true}
+        if(atlas?.editing!=false && editor?.canvas?.stylusButtons?.key(event)==true){lastInputDescription="Stylus key ${event.keyCode}, action ${event.action}, source ${event.source}";return true}
         return super.dispatchKeyEvent(event)
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+        if(atlas?.editing==false)return super.onKeyDown(keyCode,event)
         val undoShortcut = getShortcut("undo")
         val redoShortcut = getShortcut("redo")
         val eraserShortcut = getShortcut("toggle_eraser")

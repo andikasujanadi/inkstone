@@ -1,0 +1,66 @@
+{
+  "tests": 96,
+  "failures": 0,
+  "suites": [
+    {
+      "name": "art.inkstone.AdvancedEditingTest",
+      "tests": "16",
+      "failures": "0",
+      "errors": "0"
+    },
+    {
+      "name": "art.inkstone.ContributionIntegrationTest",
+      "tests": "8",
+      "failures": "0",
+      "errors": "0"
+    },
+    {
+      "name": "art.inkstone.StudioTest",
+      "tests": "29",
+      "failures": "0",
+      "errors": "0"
+    },
+    {
+      "name": "art.inkstone.WorkflowTest",
+      "tests": "5",
+      "failures": "0",
+      "errors": "0"
+    },
+    {
+      "name": "art.inkstone.VectorTest",
+      "tests": "9",
+      "failures": "0",
+      "errors": "0"
+    },
+    {
+      "name": "art.inkstone.VectorWorkflowTest",
+      "tests": "6",
+      "failures": "0",
+      "errors": "0"
+    },
+    {
+      "name": "art.inkstone.PaletteTest",
+      "tests": "3",
+      "failures": "0",
+      "errors": "0"
+    },
+    {
+      "name": "art.inkstone.Preview019Test",
+      "tests": "7",
+      "failures": "0",
+      "errors": "0"
+    },
+    {
+      "name": "art.inkstone.InteractionTest",
+      "tests": "8",
+      "failures": "0",
+      "errors": "0"
+    },
+    {
+      "name": "art.inkstone.GalleryLibraryTest",
+      "tests": "5",
+      "failures": "0",
+      "errors": "0"
+    }
+  ]
+}

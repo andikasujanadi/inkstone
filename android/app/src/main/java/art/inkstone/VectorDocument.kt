@@ -76,8 +76,8 @@ internal class VectorLayer(val id:Long,var name:String,var visible:Boolean=true,
     val effectiveLocked get()=locked || groupLocked
 }
 
-internal data class VectorGroup(val id:Long,var name:String,var visible:Boolean=true,var locked:Boolean=false,var collapsed:Boolean=false){
-    fun json()=JSONObject().put("id",id).put("name",name).put("visible",visible).put("locked",locked).put("collapsed",collapsed)
+internal data class VectorGroup(val id:Long,var name:String,var visible:Boolean=true,var locked:Boolean=false,var collapsed:Boolean=false,var opacity:Float=1f,var blend:String="Pass Through"){
+    fun json()=JSONObject().put("id",id).put("name",name).put("visible",visible).put("locked",locked).put("collapsed",collapsed).put("opacity",opacity.toDouble()).put("blend",blend)
 }
 internal class VectorDocument(val width:Int,val height:Int,val dpi:Int=300,var background:Int=Color.WHITE,var backgroundVisible:Boolean=true){
     init{require(width in 16..8192 && height in 16..8192 && width.toLong()*height<=16_777_216 && dpi in 1..2400){"Invalid Vector canvas"}}
@@ -173,12 +173,20 @@ internal class VectorDocument(val width:Int,val height:Int,val dpi:Int=300,var b
     fun draw(canvas:Canvas,includeBackground:Boolean=true,onlyLayer:VectorLayer?=null){
         if(onlyLayer==null && includeBackground && backgroundVisible)canvas.drawColor(background)
         val paint=Paint(Paint.ANTI_ALIAS_FLAG).apply{strokeCap=Paint.Cap.ROUND;strokeJoin=Paint.Join.ROUND}
+        var groupSave:Int?=null;var previous:Long?=null
         for(layer in if(onlyLayer!=null)listOf(onlyLayer) else layers){
+            val group=if(onlyLayer==null)groups.firstOrNull{it.id==layer.groupId}else null
+            if(previous!=group?.id){groupSave?.let{canvas.restoreToCount(it)};groupSave=null;previous=group?.id
+                if(group!=null && (group.opacity<1f || group.blend!="Pass Through")){
+                    groupSave=canvas.saveLayer(RectF(0f,0f,width.toFloat(),height.toFloat()),GroupAppearance.paint(group.blend,group.opacity))
+                }
+            }
             if(onlyLayer==null && (!layer.effectiveVisible || layer.opacity<=0))continue
             val save=if(onlyLayer==null && layer.opacity<1f)canvas.saveLayerAlpha(RectF(0f,0f,width.toFloat(),height.toFloat()),(layer.opacity*255).roundToInt()) else canvas.save()
             for(obj in layer.objects)drawObject(canvas,obj,paint)
             canvas.restoreToCount(save)
         }
+        groupSave?.let{canvas.restoreToCount(it)}
     }
     fun bitmap(maxSide:Int=max(width,height),onlyLayer:VectorLayer?=null):Bitmap {
         val scale=min(1f,maxSide.toFloat()/max(width,height));val w=max(1,(width*scale).roundToInt());val h=max(1,(height*scale).roundToInt())
@@ -189,7 +197,12 @@ internal class VectorDocument(val width:Int,val height:Int,val dpi:Int=300,var b
         fun color(c:Int)="#"+Integer.toHexString(c and 0xffffff).padStart(6,'0')
         val out=StringBuilder("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"${width}px\" height=\"${height}px\" viewBox=\"0 0 $width $height\" color-interpolation=\"sRGB\">\n")
         out.append("<g id=\"background\"${if(backgroundVisible)"" else " display=\"none\""}><rect width=\"$width\" height=\"$height\" fill=\"${color(background)}\" fill-opacity=\"${Color.alpha(background)/255f}\"/></g>\n")
-        for(layer in layers){out.append("<g id=\"layer-${layer.id}\" opacity=\"${layer.opacity}\"${if(layer.effectiveVisible)"" else " display=\"none\""}><title>${esc(layer.name)}</title>\n")
+        var folder:Long?=null
+        for(layer in layers){
+            if(folder!=layer.groupId){if(folder!=null)out.append("</g>\n");folder=layer.groupId
+                groups.firstOrNull{it.id==folder}?.let{g->out.append("<g id=\"group-${g.id}\" opacity=\"${g.opacity}\" style=\"${if(g.blend=="Pass Through")""else"isolation:isolate;"}mix-blend-mode:${g.blend.lowercase().replace(' ','-').let{if(it=="pass-through")"normal"else if(it=="add")"plus-lighter"else it}}\"><title>${esc(g.name)}</title>\n")}
+            }
+            out.append("<g id=\"layer-${layer.id}\" opacity=\"${layer.opacity}\"${if(layer.effectiveVisible)"" else " display=\"none\""}><title>${esc(layer.name)}</title>\n")
             for(obj in layer.objects){val m=FloatArray(9);obj.matrix.getValues(m)
                 val attrs="id=\"object-${obj.id}\" transform=\"matrix(${m[0]} ${m[3]} ${m[1]} ${m[4]} ${m[2]} ${m[5]})\" stroke=\"${color(obj.stroke)}\" stroke-opacity=\"${Color.alpha(obj.stroke)/255f}\" stroke-width=\"${obj.width}\" stroke-linecap=\"round\" stroke-linejoin=\"round\" fill=\"${obj.fill?.let{color(it)}?:"none"}\" fill-opacity=\"${obj.fill?.let{Color.alpha(it)/255f}?:1f}\""
                 val a=obj.points.first();val b=obj.points.last()
@@ -206,7 +219,7 @@ internal class VectorDocument(val width:Int,val height:Int,val dpi:Int=300,var b
                     }
                 }
             };out.append("</g>\n")
-        };return out.append("</svg>\n").toString()
+        };if(folder!=null)out.append("</g>\n");return out.append("</svg>\n").toString()
     }
     fun writePsd(file:java.io.File){
         require((layers.size.toLong()+1)*width*height<=67_108_864){"Too many rasterized layer pixels for PSD. Export SVG or reduce canvas size/layers."}
@@ -218,7 +231,14 @@ internal class VectorDocument(val width:Int,val height:Int,val dpi:Int=300,var b
                 try{image.getPixels(pixels,0,width,0,0,width,height)}finally{image.recycle()}
                 val r=JSONObject(NativeBridge.importPixels(handle,width,height,pixels));check(!r.has("error")){r.optString("error")}
                 if(index==0){command(JSONObject().put("op","active").put("index",0));command(JSONObject().put("op","delete"))}
-                command(JSONObject().put("op","layer").put("name",layer.name).put("visible",layer.effectiveVisible).put("locked",layer.effectiveLocked).put("opacity",layer.opacity.toDouble()))
+                command(JSONObject().put("op","layer").put("name",layer.name).put("visible",layer.visible).put("locked",layer.locked).put("opacity",layer.opacity.toDouble()))
+            }
+            for(g in groups){
+                val members=layers.indices.filter{layers[it].groupId==g.id};if(members.isEmpty())continue
+                command(JSONObject().put("op","group").put("action","create").put("index",members.first()).put("name",g.name))
+                val info=JSONObject(NativeBridge.command(handle,"{\"op\":\"info\"}"));val nativeGroups=info.getJSONArray("groups");val nativeId=nativeGroups.getJSONObject(nativeGroups.length()-1).getLong("id")
+                for(index in members.drop(1))command(JSONObject().put("op","group").put("action","member").put("id",nativeId).put("index",index))
+                command(JSONObject().put("op","group").put("action","update").put("id",nativeId).put("opacity",g.opacity.toDouble()).put("blend",g.blend).put("visible",g.visible).put("locked",g.locked))
             }
             val result=JSONObject(NativeBridge.writePsd(handle,file.absolutePath));check(!result.has("error")){result.optString("error")}
         }finally{NativeBridge.destroy(handle)}
@@ -254,7 +274,7 @@ internal class VectorDocument(val width:Int,val height:Int,val dpi:Int=300,var b
                 };doc.layers.add(layer)
             }
             val groups=json.optJSONArray("groups")?:JSONArray()
-            for(i in 0 until groups.length()){val g=groups.getJSONObject(i);val id=g.getLong("id");require(id in 1 until Long.MAX_VALUE-10000 && ids.add(id));doc.groups.add(VectorGroup(id,g.getString("name").take(100),g.optBoolean("visible",true),g.optBoolean("locked"),g.optBoolean("collapsed")))}
+            for(i in 0 until groups.length()){val g=groups.getJSONObject(i);val id=g.getLong("id");require(id in 1 until Long.MAX_VALUE-10000 && ids.add(id));doc.groups.add(VectorGroup(id,g.getString("name").take(100),g.optBoolean("visible",true),g.optBoolean("locked"),g.optBoolean("collapsed"),g.optDouble("opacity",1.0).toFloat().also{require(it.isFinite() && it in 0f..1f)},g.optString("blend","Pass Through").also{require(it in GroupAppearance.modes)}))}
             doc.refreshGroups()
             doc.active=json.getInt("active");require(doc.active in doc.layers.indices);doc.nextId=ids.max()+1;return doc
         }

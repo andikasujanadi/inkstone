@@ -1,8 +1,8 @@
 # Known issues
 
-## Current preview7
+## Current preview11
 
-Grouped layers are indented in both editors and animate into/out of their folders. The release includes the locally tested gallery, brush, Warp, guide and Liquify work below. Retest slow Fade starts, stylus input, drag timing and large Liquify brushes on physical Android devices. Groups/stacks are one level; folder hierarchy and gallery library metadata are not included in exported artwork. See [current release instructions](LOCAL_PREVIEW_019_7.md) for the detailed limits. Older preview sections below are historical feedback, not the current feature inventory.
+Multicolor uses an editor-owned dark panel. Canvas Atlas shares the editor camera and shows inactive documents as bounded previews. Group blend/opacity and personal brushes are available. Physical Android testing is still required for stylus behavior, Fade starts, drag timing, navigation feel and Vulkan performance. Wet mix is an approximation, isolated Raster group compositing uses CPU patches, and nondefault group appearance is baked to a single PSD layer. Atlas positions, gallery metadata and personal brush libraries stay device-local. Groups/stacks are one level. See [current release instructions](LOCAL_PREVIEW_019_11.md). Older sections below record historical feedback rather than the current inventory.
 
 ## Local preview6 — awaiting device testing
 

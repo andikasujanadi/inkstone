@@ -1,4 +1,12 @@
-# Verification — 26 October 2026
+# Verification — 27 October 2026
+
+## 0.1.9-preview11 release checks
+
+- 108 Android framework/JNI tests, 75 standard Rust tests and 12 physical desktop Metal GPU tests passed. Multicolor panel tests verify editor-owned controls and applied color, tip, layout and cycle persistence; Atlas/group/library checks are retained.
+- Android build/lint passed: zero errors, 113 warnings. The framework-rendered Multicolor panel was visually inspected. Android device performance remains untested.
+- Package `art.inkstone.preview`, code 29, `0.1.9-preview11`, same v2 signer; both ABI libraries match source-built binaries, fourteen JNI methods, 16 KB alignment. License assets match source.
+- APK: 10,944,538 bytes; SHA-256 `070d9441ae6dafc3b295e392d8ee04293c4c5e5abffd9801aeef6713ba783170`. Machine-readable evidence: `artifacts/preview11-full-test-summary.json` and `artifacts/apk-verification.json`.
+- Publication is verified separately. [Release instructions](LOCAL_PREVIEW_019_11.md).
 
 ## 0.1.9-preview7 release checks
 

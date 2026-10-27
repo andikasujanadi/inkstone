@@ -1,0 +1,45 @@
+{
+  "version": "0.1.9-preview9",
+  "version_code": 27,
+  "published": false,
+  "android_unit_tests": {
+    "tests": 105,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "rust_unit_tests": {
+    "passed": 73,
+    "failed": 0
+  },
+  "desktop_physical_gpu_tests": {
+    "passed": 11,
+    "failed": 0,
+    "adapter": "Apple Metal"
+  },
+  "lint": {
+    "Error": 0,
+    "Fatal": 0,
+    "Warning": 110
+  },
+  "apk_native_matches_built_source": {
+    "arm64-v8a": true,
+    "x86_64": true
+  },
+  "apk_license_assets_match_source": {
+    "licenses/inkstone-legacy-MIT-through-v0.1.8.txt": true,
+    "licenses/ADDITIONAL_PERMISSIONS.md": true,
+    "licenses/inkstone-LICENSING.md": true,
+    "licenses/vectorcraft-MIT.txt": true,
+    "licenses/inkstone-LICENSE.txt": true
+  },
+  "apk_bytes": 10419881,
+  "apk_sha256": "69ab8c007b07f61878060466f87323148568131451132d0e150abb26b5c98ab1",
+  "device_tested": false,
+  "apk_package": "art.inkstone.preview",
+  "apk_signature": {
+    "v2_verified": true,
+    "certificate_sha256": "23bd46ca626fc975136cf1b2b2772a3d56df2e3a7ddd28899a660880f498e5d3"
+  },
+  "includes_preview8_panel_sizing_fix": true
+}

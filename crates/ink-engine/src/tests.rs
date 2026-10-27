@@ -731,3 +731,70 @@ fn only_member_can_be_dragged_past_its_own_folder_boundary(){
     e.command(&json!({"op":"moveLayer","id":2,"targetId":2,"groupId":null,"above":false})).unwrap();assert_eq!(e.state.layers[1].group_id,None);assert_eq!(e.state.layers[1].id,2);
     e.undo();assert_eq!(e.state.layers[1].group_id,Some(1));
 }
+
+#[test]
+fn group_opacity_is_applied_after_members_are_combined_and_survives_history(){
+    let mut e=Engine::new(16,16).unwrap();e.command(&json!({"op":"fill","color":0xffff0000u32})).unwrap();
+    e.command(&json!({"op":"group","action":"create","name":"Paint"})).unwrap();
+    e.command(&json!({"op":"add"})).unwrap();e.command(&json!({"op":"fill","color":0xff0000ffu32})).unwrap();
+    e.command(&json!({"op":"group","action":"update","id":1,"opacity":0.5,"blend":"Normal"})).unwrap();
+    let color=e.color_at(8,8,false);assert!(((color>>24)as i32-128).abs()<=1);assert_eq!(color&0xffffff,0x0000ff);
+    let loaded=Engine::load(&e.save().unwrap()).unwrap();assert_eq!(loaded.color_at(8,8,false),color);
+    e.undo();assert_eq!(e.color_at(8,8,false),0xff0000ff);e.redo();assert_eq!(e.color_at(8,8,false),color);
+    e.command(&json!({"op":"group","action":"update","id":1,"visible":false})).unwrap();assert_eq!(e.color_at(8,8,false),0);
+}
+#[test]
+fn isolated_group_multiply_blends_against_the_outer_backdrop(){
+    let mut e=Engine::new(16,16).unwrap();e.command(&json!({"op":"fill","color":0xff808080u32})).unwrap();
+    e.command(&json!({"op":"add"})).unwrap();e.command(&json!({"op":"fill","color":0xffff0000u32})).unwrap();
+    e.command(&json!({"op":"group","action":"create"})).unwrap();
+    e.command(&json!({"op":"group","action":"update","id":1,"blend":"Multiply"})).unwrap();
+    assert_eq!(e.color_at(4,4,false),0xff800000);
+    e.command(&json!({"op":"group","action":"update","id":1,"opacity":0.0})).unwrap();assert_eq!(e.color_at(4,4,false),0xff808080);
+}
+#[test]
+fn old_group_documents_default_to_pass_through_and_full_opacity(){
+    let mut e=Engine::new(16,16).unwrap();e.command(&json!({"op":"group","action":"create"})).unwrap();
+    let mut doc:Value=serde_json::from_slice(&e.save().unwrap()).unwrap();doc["groups"][0].as_object_mut().unwrap().remove("opacity");doc["groups"][0].as_object_mut().unwrap().remove("blend");
+    let other=Engine::load(&serde_json::to_vec(&doc).unwrap()).unwrap();let info=other.info();assert_eq!(info["groups"][0]["opacity"],1.0);assert_eq!(info["groups"][0]["blend"],"Pass Through");
+}
+#[test]
+fn rainbow_changes_along_a_stroke_without_changing_width_or_history_count(){
+    let mut e=Engine::new(128,32).unwrap();e.command(&json!({"op":"brushEffects","mode":"Rainbow","cycle":96})).unwrap();
+    let brush=Brush{size:8.,pressure_size:0.,stabilization:0.,..Brush::default()};
+    e.begin(Sample{x:8.,y:16.,pressure:1.,tilt:0.},brush);e.sample(Sample{x:112.,y:16.,pressure:1.,tilt:0.});e.end();
+    let a=e.color_at(16,16,false);let b=e.color_at(48,16,false);assert_ne!(a&0xffffff,b&0xffffff);assert!((a>>24)>200 && (b>>24)>200);assert_eq!(e.undo.len(),1);
+    let saved=e.save().unwrap();e.undo();assert_eq!(e.color_at(48,16,false),0);e.redo();assert_eq!(e.save().unwrap(),saved);
+}
+#[test]
+fn palette_interpolation_and_ryb_wet_mix_are_predictable(){
+    let effects=brush_color::BrushColor::parse(&json!({"mode":"Palette","cycle":100,"palette":[0xffff0000u32,0xff0000ffu32]})).unwrap();
+    assert_eq!(effects.color(0xff123456,0.),0xffff0000);assert_eq!(effects.color(0xff123456,50.),0xff0000ff);
+    let mix=brush_color::wet_mix(0xff0000ff,0xffffff00,0.5);assert!(channel(mix,8)>channel(mix,16) && channel(mix,8)>channel(mix,0));
+    assert_eq!(brush_color::wet_mix(0xff123456,0,1.),0xff123456);
+}
+
+#[test]
+fn psd_preserves_group_appearance_by_baking_the_group_without_changing_the_native_document(){
+    let mut e=Engine::new(16,16).unwrap();e.command(&json!({"op":"background","visible":false})).unwrap();
+    e.command(&json!({"op":"fill","color":0xffff0000u32})).unwrap();e.command(&json!({"op":"group","action":"create","name":"Paint folder"})).unwrap();
+    e.command(&json!({"op":"add"})).unwrap();e.command(&json!({"op":"fill","color":0xff0000ffu32})).unwrap();e.command(&json!({"op":"group","action":"update","id":1,"opacity":0.5,"blend":"Normal"})).unwrap();
+    let before=e.save().unwrap();let mut bytes=Vec::new();e.write_psd(&mut bytes).unwrap();assert_eq!(before,e.save().unwrap());
+    let (loaded,_)=Engine::read_psd(&bytes).unwrap();let color=loaded.color_at(8,8,false);assert!(((color>>24)as i32-128).abs()<=1);assert_eq!(color&0xffffff,0x0000ff);
+}
+
+#[test]
+fn multicolor_carries_distinct_colors_across_width_and_uses_custom_color_stops(){
+    let mut e=Engine::new(128,80).unwrap();e.command(&json!({"op":"brushEffects","mode":"Palette","layout":"Across","cycle":20000,"palette":[0xffff0000u32,0xff00ff00u32,0xff0000ffu32]})).unwrap();
+    e.begin(Sample{x:12.,y:40.,pressure:1.,tilt:0.},Brush{size:40.,pressure_size:0.,stabilization:0.,..Brush::default()});e.sample(Sample{x:115.,y:40.,pressure:1.,tilt:0.});e.end();
+    let top=e.color_at(64,26,false);let middle=e.color_at(64,40,false);let bottom=e.color_at(64,54,false);
+    assert!(channel(top,0)>channel(top,8));assert!(channel(middle,16)>channel(middle,0));assert!(channel(bottom,8)>channel(bottom,16));assert!(channel(middle,24)>0.9);
+    let bytes=e.save().unwrap();e.undo();assert_eq!(e.color_at(64,40,false),0);e.redo();assert_eq!(bytes,e.save().unwrap());
+}
+#[test]
+fn multicolor_cycle_length_controls_distance_and_bristle_layout_survives_fade_replay(){
+    let short=brush_color::BrushColor::parse(&json!({"mode":"Rainbow","cycle":60,"layout":"Across"})).unwrap();let long=brush_color::BrushColor::parse(&json!({"mode":"Rainbow","cycle":6000,"layout":"Across"})).unwrap();
+    assert_ne!(short.at(0xff000000,20.,0.),long.at(0xff000000,20.,0.));
+    let mut e=Engine::new(160,100).unwrap();e.command(&json!({"op":"brushEffects","mode":"Rainbow","layout":"Bristles","cycle":600})).unwrap();
+    e.begin(Sample{x:15.,y:30.,pressure:1.,tilt:0.},Brush{size:30.,pressure_size:0.,stabilization:0.,fade_length:40.,..Brush::default()});e.sample(Sample{x:80.,y:30.,pressure:1.,tilt:0.});e.sample(Sample{x:130.,y:70.,pressure:1.,tilt:0.});e.end();assert!(e.state.layers[0].pixels.iter().any(|c|*c>>24>0));assert_eq!(e.undo.len(),1);
+}

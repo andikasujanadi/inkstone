@@ -31,7 +31,7 @@ internal class VectorColorDropController(private val root:FrameLayout,private va
                 preview.invalidate()
             }
             MotionEvent.ACTION_UP->{
-                if(dragging){if(cursorX>=canvas.left && cursorX<canvas.right && cursorY>=canvas.top && cursorY<canvas.bottom)canvas.fillAt(cursorX-canvas.left,cursorY-canvas.top,color)}else tap()
+                if(dragging){if((root.context as? MainActivity)?.atlas?.editing!=false && cursorX>=canvas.left && cursorX<canvas.right && cursorY>=canvas.top && cursorY<canvas.bottom)canvas.fillAt(cursorX-canvas.left,cursorY-canvas.top,color)}else tap()
                 cancel()
             }
             MotionEvent.ACTION_CANCEL,MotionEvent.ACTION_POINTER_DOWN->cancel()

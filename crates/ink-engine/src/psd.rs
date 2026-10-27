@@ -54,6 +54,23 @@ fn blend(mode: &str) -> &'static [u8; 4] {
 impl Engine {
     pub fn write_psd(&mut self, out: &mut impl Write) -> io::Result<()> {
         self.flush_gpu();
+        let mut source=self.state.layers.clone();
+        if let Some((index,before))=&self.flood_preview{source[*index].pixels=before.clone();}
+        let mut export_layers=Vec::new();let mut seen=std::collections::HashSet::new();
+        for layer in &source{
+            let group=layer.group_id.and_then(|id|self.state.groups.iter().find(|g|g.id==id)).filter(|g|g.blend!="Pass Through" || g.opacity<1.0);
+            if let Some(g)=group{
+                if !seen.insert(g.id){continue;}
+                let members:Vec<_>=source.iter().filter(|l|l.group_id==Some(g.id)).collect();
+                let mut pixels=vec![0;self.width*self.height];
+                for (index,pixel) in pixels.iter_mut().enumerate(){let mut base=0.0;for member in &members{
+                    if !member.clipping{base=if member.visible{channel(member.pixels[index],24)*member.mask_coverage(index)}else{0.0};}
+                    if member.visible{*pixel=composite(*pixel,member.pixels[index],member.opacity*member.mask_coverage(index)*if member.clipping{base}else{1.0},&member.blend);}
+                }}
+                let mut combined=layer.clone();combined.name=g.name.clone();combined.pixels=Arc::new(pixels);combined.group_id=None;combined.group_visible=true;combined.group_locked=false;combined.visible=g.visible;combined.locked=g.locked;combined.opacity=g.opacity;combined.blend=if g.blend=="Pass Through"{"Normal".into()}else{g.blend.clone()};combined.clipping=false;combined.mask=None;combined.alpha_lock=false;
+                export_layers.push(combined);
+            }else{export_layers.push(layer.clone());}
+        }
         let mut layers = Vec::new();
         // PSD records are ordered bottom-to-top, matching the document's pixel stack.
         layers.push(ExportLayer {
@@ -69,16 +86,8 @@ impl Engine {
             blend: "Normal",
             id: u32::MAX,mask:None,mask_enabled:true,
         });
-        for (index, layer) in self.state.layers.iter().enumerate() {
-            let pixels = if let Some((active, before)) = &self.flood_preview {
-                if *active == index {
-                    before.as_slice()
-                } else {
-                    layer.pixels.as_slice()
-                }
-            } else {
-                layer.pixels.as_slice()
-            };
+        for layer in &export_layers {
+            let pixels=layer.pixels.as_slice();
             let mut rect = [self.width, self.height, 0, 0];
             for y in 0..self.height {
                 for x in 0..self.width {

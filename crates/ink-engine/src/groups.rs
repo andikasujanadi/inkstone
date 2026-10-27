@@ -1,7 +1,9 @@
 use super::*;
 
 #[derive(Clone,Serialize,Deserialize)]
-pub(super) struct LayerGroup {pub(super) id:u32,pub(super) name:String,visible:bool,locked:bool,collapsed:bool}
+pub(super) struct LayerGroup {pub(super) id:u32,pub(super) name:String,pub(super) visible:bool,pub(super) locked:bool,collapsed:bool,#[serde(default="group_opacity")] pub(super) opacity:f32,#[serde(default="group_blend")] pub(super) blend:String}
+fn group_opacity()->f32{1.0}
+fn group_blend()->String{"Pass Through".into()}
 impl Layer {
     pub fn is_visible(&self)->bool{self.visible && self.group_visible}
     pub fn is_locked(&self)->bool{self.locked || self.group_locked}
@@ -41,6 +43,7 @@ impl Engine {
         let group=self.state.groups.iter().position(|g|Some(g.id)==id);
         if action!="create" && group.is_none(){return Err("Group not found".into());}
         if action=="translate" && self.state.groups[group.unwrap()].locked{return Err("This group is locked".into());}
+        if let Some(mode)=v["blend"].as_str(){if !matches!(mode,"Pass Through"|"Normal"|"Multiply"|"Screen"|"Overlay"|"Darken"|"Lighten"|"Color Burn"|"Linear Burn"|"Color Dodge"|"Add"|"Soft Light"|"Hard Light"|"Difference"|"Exclusion"|"Subtract"){return Err("Unknown group blend mode".into());}}
         let index=v["index"].as_u64().unwrap_or(self.state.active as u64) as usize;
         if index>=self.state.layers.len(){return Err("Layer not found".into());}
         if action=="translate"{
@@ -49,7 +52,7 @@ impl Engine {
         }
         self.structure(|e|{
             match action{
-                "create"=>{let next=e.state.groups.iter().map(|g|g.id).max().unwrap_or(0).saturating_add(1);e.state.groups.push(LayerGroup{id:next,name:v["name"].as_str().unwrap_or("New group").chars().take(100).collect(),visible:true,locked:false,collapsed:false});e.state.layers[index].group_id=Some(next);},
+                "create"=>{let next=e.state.groups.iter().map(|g|g.id).max().unwrap_or(0).saturating_add(1);e.state.groups.push(LayerGroup{id:next,name:v["name"].as_str().unwrap_or("New group").chars().take(100).collect(),visible:true,locked:false,collapsed:false,opacity:1.0,blend:group_blend()});e.state.layers[index].group_id=Some(next);},
                 "member"=>{
                     let active_id=e.state.layers[e.state.active].id;
                     let mut layer=e.state.layers.remove(index);layer.group_id=id;
@@ -67,7 +70,7 @@ impl Engine {
                         l.pixels=Arc::new(out);l.mask=mask.map(Arc::new);
                     }
                 },
-                _=>{let g=&mut e.state.groups[group.unwrap()];if let Some(name)=v["name"].as_str(){g.name=name.chars().take(100).collect();}if let Some(b)=v["visible"].as_bool(){g.visible=b;}if let Some(b)=v["locked"].as_bool(){g.locked=b;}if let Some(b)=v["collapsed"].as_bool(){g.collapsed=b;}}
+                _=>{let g=&mut e.state.groups[group.unwrap()];if let Some(name)=v["name"].as_str(){g.name=name.chars().take(100).collect();}if let Some(b)=v["visible"].as_bool(){g.visible=b;}if let Some(b)=v["locked"].as_bool(){g.locked=b;}if let Some(b)=v["collapsed"].as_bool(){g.collapsed=b;}if let Some(n)=v["opacity"].as_f64(){g.opacity=(n as f32).clamp(0.0,1.0);}if let Some(mode)=v["blend"].as_str(){g.blend=mode.into();}}
             }
             if matches!(action,"create"|"member"|"removeMember"){
                 let active=e.state.layers[e.state.active].id;

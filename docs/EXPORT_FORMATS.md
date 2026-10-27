@@ -39,3 +39,7 @@ Pending Raster transforms commit before project/image/PSD snapshots; exports use
 ## Layer masks and PSD import
 
 Raster layer masks export as separate grayscale PSD user-mask channels while original RGB/alpha pixels remain editable. Layered 8-bit RGB PSD import supports RAW, RLE, ZIP and ZIP prediction. See [LOCAL_WORKFLOWS.md](LOCAL_WORKFLOWS.md) for supported metadata, rejection cases, memory limits and import warnings.
+
+## Group appearance in preview11
+
+`.inkstone` preserves editable folder members and group blend/opacity. SVG preserves Vector folder appearance. PSD preserves the appearance of folders with a nondefault blend mode or opacity by baking each such folder into one raster layer. Full-opacity Pass Through folders retain separate member layers. Atlas placement, gallery tags/stacks and personal brush libraries remain device-local metadata.

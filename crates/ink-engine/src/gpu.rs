@@ -16,6 +16,9 @@ pub struct Params {
     pub dab: [f32; 4],
     pub flags: [u32; 4],
     pub region: [u32; 4],
+    pub palette:[u32;12],
+    pub color_effect:[f32;4],
+    pub direction:[f32;4],
 }
 pub struct Dab {
     pub brush: super::Brush,
@@ -345,11 +348,11 @@ impl Gpu {
             .max(256) as usize;
         let mut data = vec![0u8; (dabs.len() + 1) * stride];
         for (i, dab) in dabs.iter().enumerate() {
-            data[i * stride..i * stride + 80].copy_from_slice(bytemuck::bytes_of(&dab.params));
+            data[i * stride..i * stride + std::mem::size_of::<Params>()].copy_from_slice(bytemuck::bytes_of(&dab.params));
         }
         let mut gather = dabs.last().unwrap().params;
         gather.region = [x as u32, y as u32, w as u32, h as u32];
-        data[dabs.len() * stride..dabs.len() * stride + 80]
+        data[dabs.len() * stride..dabs.len() * stride + std::mem::size_of::<Params>()]
             .copy_from_slice(bytemuck::bytes_of(&gather));
         let params = Self::upload(
             &self.device,
@@ -387,7 +390,7 @@ impl Gpu {
                     wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                         buffer: b,
                         offset: 0,
-                        size: std::num::NonZeroU64::new(80),
+                        size: std::num::NonZeroU64::new(std::mem::size_of::<Params>() as u64),
                     })
                 } else {
                     b.as_entire_binding()

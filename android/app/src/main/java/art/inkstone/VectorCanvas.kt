@@ -19,6 +19,8 @@ internal class VectorCanvas(private val activity:MainActivity,val document:Vecto
     var onDismissPanel:()->Boolean={false}
     private val density=resources.displayMetrics.density
     private val paint=Paint(Paint.ANTI_ALIAS_FLAG)
+    private var fitScale=1f
+    internal var onAtlas:()->Unit={}
     private var zoom=1f;private var rotation=0f;private var pan=PointF();private var fitted=false
     private val historyTap=MultiFingerTap(12*resources.displayMetrics.density)
     private var pointer=-1;private var pen=false
@@ -39,8 +41,14 @@ internal class VectorCanvas(private val activity:MainActivity,val document:Vecto
     private fun screenMatrix()=Matrix().apply{postTranslate(-document.width/2f,-document.height/2f);postScale(zoom,zoom);postRotate(rotation);postTranslate(width/2f+pan.x,height/2f+pan.y)}
     internal fun pagePoint(x:Float,y:Float):PointF {val inverse=Matrix();screenMatrix().invert(inverse);val p=floatArrayOf(x,y);inverse.mapPoints(p);return PointF(p[0],p[1])}
     internal fun viewPoint(x:Float,y:Float):PointF {val p=floatArrayOf(x,y);screenMatrix().mapPoints(p);return PointF(p[0],p[1])}
-    fun fit(){if(width<=0 || height<=0)return;zoom=min((width-64*density)/document.width,(height-64*density)/document.height).coerceAtLeast(.01f);pan=PointF();rotation=0f;fitted=true;invalidate()}
-    override fun onSizeChanged(w:Int,h:Int,oldw:Int,oldh:Int){if(!fitted || oldw!=w || oldh!=h)fit()}
+    internal fun captureAtlas(){activity.atlas?.capture(screenMatrix(),width,height)}
+    internal fun setAtlasCamera(matrix:Matrix){fitScale=min((width-64*density)/document.width,(height-64*density)/document.height).coerceAtLeast(.01f);val values=FloatArray(9);matrix.getValues(values);zoom=hypot(values[0],values[3]);rotation=atan2(values[3],values[0])*180f/Math.PI.toFloat();val center=floatArrayOf(document.width/2f,document.height/2f);matrix.mapPoints(center);pan=PointF(center[0]-width/2f,center[1]-height/2f);fitted=true;invalidate()}
+    private var atlasAnimator:android.animation.ValueAnimator?=null
+    private var atlasGestureStartZoom=1f
+    internal fun atlasOverview(){atlasAnimator?.cancel();val start=zoom;val target=min((width-64*density)/document.width,(height-64*density)/document.height)*.38f;val previous=PointF(pan.x,pan.y)
+        atlasAnimator=android.animation.ValueAnimator.ofFloat(0f,1f).apply{duration=280;interpolator=android.view.animation.DecelerateInterpolator();addUpdateListener{val f=it.animatedValue as Float;zoom=start+(target-start)*f;pan=PointF(previous.x*(1-f),previous.y*(1-f));invalidate()};start()}}
+    fun fit(){if(width<=0 || height<=0)return;zoom=min((width-64*density)/document.width,(height-64*density)/document.height).coerceAtLeast(.01f);fitScale=zoom;pan=PointF();rotation=0f;fitted=true;invalidate()}
+    override fun onSizeChanged(w:Int,h:Int,oldw:Int,oldh:Int){val camera=activity.atlas?.pageCamera(w,h);if(camera!=null)setAtlasCamera(camera)else if(!fitted || oldw!=w || oldh!=h)fit()}
     fun snapshot():ByteArray=before?.clone()?:document.encode()
     fun cancelGesture(){before?.let{document.restore(it)};before=null;draft=null;pointer=-1;mode="";multi=false;invalidate();onSelection()}
     fun changeTool(value:String){joiningPaths=false;addingAnchor=false;cancelGesture();if(value!="Nodes")selectedNode=null;tool=value;invalidate();onSelection()}
@@ -48,8 +56,10 @@ internal class VectorCanvas(private val activity:MainActivity,val document:Vecto
     fun redo(){addingAnchor=false;cancelGesture();if(document.redo()){selectedId=null;selectedNode=null;onChanged()};activity.message(document.historyNotice);invalidate();onSelection()}
     fun edit(change:()->Unit){cancelGesture();runCatching{document.edit(change)}.onFailure{activity.message(it.message?:"Could not change object")}.onSuccess{onChanged()};invalidate();onSelection()}
     override fun onDraw(c:Canvas){
+        if(activity.atlas!=null)activity.atlas!!.draw(c,screenMatrix(),width,height)else{
         c.drawColor(StudioColors.workspace);paint.color=0x0bffffff;paint.strokeWidth=density
         var x=0f;while(x<width){c.drawLine(x,0f,x,height.toFloat(),paint);x+=24*density};var y=0f;while(y<height){c.drawLine(0f,y,width.toFloat(),y,paint);y+=24*density}
+        }
         val page=c.save();c.concat(screenMatrix());val clipped=c.save();c.clipRect(0f,0f,document.width.toFloat(),document.height.toFloat())
         if(!document.backgroundVisible){c.drawColor(0xffe2e4e7.toInt());paint.color=0xffc5c9ce.toInt();for(yy in 0 until document.height step 32)for(xx in 0 until document.width step 32)if((xx/32+yy/32)%2==0)c.drawRect(xx.toFloat(),yy.toFloat(),xx+32f,yy+32f,paint)}
         document.draw(c);guides.draw(c,document.width.toFloat(),document.height.toFloat(),zoom);draft?.let{VectorDocument.drawObject(c,it)};c.restoreToCount(clipped)
@@ -232,6 +242,8 @@ internal class VectorCanvas(private val activity:MainActivity,val document:Vecto
         before=null;draft=null;pointer=-1;mode="";invalidate();onSelection()
     }
     override fun onTouchEvent(e:MotionEvent):Boolean {
+        if(e.actionMasked==MotionEvent.ACTION_DOWN){atlasAnimator?.cancel();atlasAnimator=null}
+        if(activity.atlas?.touch(e,this,screenMatrix(),::setAtlasCamera)==true)return true
         if(guides.touch(e,pagePoint(e.x,e.y),document.width.toFloat(),document.height.toFloat(),32*density/zoom)){invalidate();return true}
         val tappedFingers=historyTap.observe(e)
         parent.requestDisallowInterceptTouchEvent(true)
@@ -240,18 +252,19 @@ internal class VectorCanvas(private val activity:MainActivity,val document:Vecto
         if(!e.x.isFinite() || !e.y.isFinite()){cancelGesture();return true}
         when(e.actionMasked){
             MotionEvent.ACTION_DOWN->{if(onDismissPanel())return true;activity.deferAutosave();pointer=e.getPointerId(0);pen=hasPen;mode="";if(hasPen || !activity.penOnlyInput || tool in listOf("Nodes","Select"))begin(pagePoint(e.x,e.y))}
-            MotionEvent.ACTION_POINTER_DOWN->{if(pen && pointer>=0)return true;cancelGesture();multi=true;gestureCenter=PointF((e.getX(0)+e.getX(1))/2,(e.getY(0)+e.getY(1))/2);gestureDistance=hypot(e.getX(1)-e.getX(0),e.getY(1)-e.getY(0));gestureAngle=atan2(e.getY(1)-e.getY(0),e.getX(1)-e.getX(0))}
+            MotionEvent.ACTION_POINTER_DOWN->{if(pen && pointer>=0)return true;cancelGesture();multi=true;atlasGestureStartZoom=zoom;gestureCenter=PointF((e.getX(0)+e.getX(1))/2,(e.getY(0)+e.getY(1))/2);gestureDistance=hypot(e.getX(1)-e.getX(0),e.getY(1)-e.getY(0));gestureAngle=atan2(e.getY(1)-e.getY(0),e.getX(1)-e.getX(0))}
             MotionEvent.ACTION_MOVE->{
                 if(multi && e.pointerCount>=2){val mid=PointF((e.getX(0)+e.getX(1))/2,(e.getY(0)+e.getY(1))/2);val distance=hypot(e.getX(1)-e.getX(0),e.getY(1)-e.getY(0));val page=pagePoint(gestureCenter.x,gestureCenter.y)
                     val angle=atan2(e.getY(1)-e.getY(0),e.getX(1)-e.getX(0));var delta=angle-gestureAngle
                     while(delta>Math.PI)delta-=(2*Math.PI).toFloat();while(delta< -Math.PI)delta+=(2*Math.PI).toFloat();rotation+=delta*180f/Math.PI.toFloat();gestureAngle=angle
-                    if(gestureDistance>0)zoom=(zoom*distance/gestureDistance).coerceIn(.01f,64f);val now=viewPoint(page.x,page.y);pan.offset(mid.x-now.x,mid.y-now.y);gestureCenter=mid;gestureDistance=distance;invalidate();return true}
+                    if(gestureDistance>0)zoom=(zoom*distance/gestureDistance).coerceIn(.01f,64f);if(zoom<fitScale*.55f && zoom<atlasGestureStartZoom*.85f)onAtlas();val now=viewPoint(page.x,page.y);pan.offset(mid.x-now.x,mid.y-now.y);gestureCenter=mid;gestureDistance=distance;invalidate();return true}
                 val index=e.findPointerIndex(pointer);if(index>=0 && !multi){if(draft?.kind=="Pen")for(h in 0 until e.historySize)move(pagePoint(e.getHistoricalX(index,h),e.getHistoricalY(index,h)),e.getHistoricalEventTime(h));move(pagePoint(e.getX(index),e.getY(index)),e.eventTime)}
             }
             MotionEvent.ACTION_POINTER_UP->{if(pen && e.getPointerId(e.actionIndex)==pointer){move(pagePoint(e.getX(e.actionIndex),e.getY(e.actionIndex)),e.eventTime,release=true);finish()}}
-            MotionEvent.ACTION_UP->{if(multi){when(tappedFingers){2->if(activity.twoFingerUndo)undo();3->if(activity.threeFingerRedo)redo()}};if(!multi && tappedFingers==0 && pointer>=0){move(pagePoint(e.x,e.y),e.eventTime,release=true);finish()};multi=false;pointer=-1;performClick()}
+            MotionEvent.ACTION_UP->{if(multi && activity.atlas==null && zoom<fitScale*.48f){multi=false;pointer=-1;onAtlas();return true};if(multi){when(tappedFingers){2->if(activity.twoFingerUndo)undo();3->if(activity.threeFingerRedo)redo()}};if(!multi && tappedFingers==0 && pointer>=0){move(pagePoint(e.x,e.y),e.eventTime,release=true);finish()};multi=false;pointer=-1;performClick()}
             MotionEvent.ACTION_CANCEL->{cancelGesture();activity.scheduleSave()}
         };return true
     }
+    override fun onDetachedFromWindow(){atlasAnimator?.cancel();atlasAnimator=null;super.onDetachedFromWindow()}
     override fun performClick():Boolean{super.performClick();return true}
 }
