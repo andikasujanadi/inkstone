@@ -1,5 +1,13 @@
 # Verification — 27 October 2026
 
+## 0.1.9-preview12 release checks
+
+- 113 Android framework/JNI tests passed. Covers background visibility, rapid color changes, native-free picker, custom hex, Undo, light-mode toolbar/history rotation, gallery/canvas setup and preservation of actual color swatches.
+- Android build/lint passed: zero errors, 117 warnings. Raster/Vector light-mode framework screenshots inspected. Physical Android testing remains pending.
+- Native engine unchanged from preview11 (75 Rust and 12 desktop Metal checks); packaged native binaries and licensing assets match validated local files.
+- Package `art.inkstone.preview`, code 30, same v2 signing certificate, both ABIs, fourteen JNI methods and 16 KB alignment. APK: 10,952,463 bytes; SHA-256 `7c14db00470f6d78f8eb2eaf2314dfd92d9c2d9e73df0c0e297819b5fcb02c73`.
+- [Release instructions](LOCAL_PREVIEW_019_12.md); final GitHub publication is verified separately.
+
 ## 0.1.9-preview11 release checks
 
 - 108 Android framework/JNI tests, 75 standard Rust tests and 12 physical desktop Metal GPU tests passed. Multicolor panel tests verify editor-owned controls and applied color, tip, layout and cycle persistence; Atlas/group/library checks are retained.

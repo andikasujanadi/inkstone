@@ -262,7 +262,7 @@ class PaintCanvas(context: Context, val session: DrawingSession) : View(context)
         updateMatrix()
         val atlas=(context as? MainActivity)?.atlas
         if(atlas!=null)atlas.draw(canvas,transform,width,height)else{
-        canvas.drawColor(if (session.lightInterface) 0xffb5b5b5.toInt() else StudioColors.workspace)
+        canvas.drawColor(StudioTheme.of(context).workspace)
         paint.style=Paint.Style.STROKE;paint.strokeWidth=dp*.65f
         paint.color=if(session.lightInterface)0x14000000 else 0x10ffffff
         val spacing=16*dp

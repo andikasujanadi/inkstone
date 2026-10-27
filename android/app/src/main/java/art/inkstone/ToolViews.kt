@@ -127,9 +127,9 @@ class VerticalSlider(context: Context, private val label: String, initial: Float
     private val p=Paint(Paint.ANTI_ALIAS_FLAG)
     init{isFocusable=true;isClickable=true;contentDescription=label}
     override fun onDraw(c:Canvas){val d=resources.displayMetrics.density
-        p.color=StudioColors.track;c.drawRoundRect(3*d,0f,width-3*d,height.toFloat(),StudioShape.CORNER_DP*d,StudioShape.CORNER_DP*d,p)
+        p.color=StudioTheme.of(context).track;c.drawRoundRect(3*d,0f,width-3*d,height.toFloat(),StudioShape.CORNER_DP*d,StudioShape.CORNER_DP*d,p)
         bookmark?.let{p.color=0xff4cb5ed.toInt();val y=height-10*d-it*(height-20*d);c.drawRect(2*d,y-d,7*d,y+d,p)}
-        val y=thumbY;p.color=0xffc8d2d6.toInt();c.drawRoundRect(2*d,y-6*d,width-2*d,y+6*d,StudioShape.CORNER_DP*d,StudioShape.CORNER_DP*d,p)
+        val y=thumbY;p.color=if(StudioTheme.of(context).light)0xff647689.toInt() else 0xffc8d2d6.toInt();c.drawRoundRect(2*d,y-6*d,width-2*d,y+6*d,StudioShape.CORNER_DP*d,StudioShape.CORNER_DP*d,p)
         p.style=Paint.Style.STROKE;p.strokeWidth=d;p.color=0xff879599.toInt();c.drawRoundRect(2*d,y-6*d,width-2*d,y+6*d,StudioShape.CORNER_DP*d,StudioShape.CORNER_DP*d,p);p.style=Paint.Style.FILL
     }
     override fun onTouchEvent(e:MotionEvent):Boolean{
@@ -155,7 +155,7 @@ class BrushPreview(context:Context,val preset:BrushPreset,var chosen:Boolean=fal
         if(w<=0||h<=0)return
         stroke?.recycle();stroke=Bitmap.createBitmap(w,h,Bitmap.Config.ARGB_8888)
         val c=Canvas(stroke!!);val d=resources.displayMetrics.density
-        p.color=if(eraser)0xff273440.toInt() else 0xffedf3f4.toInt();p.style=Paint.Style.FILL
+        p.color=if(eraser)0xff273440.toInt() else if(StudioTheme.of(context).light)0xff374a5c.toInt() else 0xffedf3f4.toInt();p.style=Paint.Style.FILL
         p.maskFilter=if(preset.kind in listOf(2,8,9))BlurMaskFilter((if(preset.kind==2)12 else if(preset.kind==9)2 else 6)*d,BlurMaskFilter.Blur.NORMAL) else if(preset.kind==4)BlurMaskFilter(3*d,BlurMaskFilter.Blur.NORMAL) else null
         fun shade(value:Float):Int{val t=(value-floor(value));if(preset.colorMode!="Palette" || preset.palette.size<2)return Color.HSVToColor(floatArrayOf(t*360f,.85f,1f));val at=t*preset.palette.size;val a=preset.palette[at.toInt()%preset.palette.size];val b=preset.palette[(at.toInt()+1)%preset.palette.size];val f=at-at.toInt();return Color.rgb((Color.red(a)*(1-f)+Color.red(b)*f).roundToInt(),(Color.green(a)*(1-f)+Color.green(b)*f).roundToInt(),(Color.blue(a)*(1-f)+Color.blue(b)*f).roundToInt())}
         for(i in 0..140){val t=i/140f;val x=22*d+t*(w-44*d);val y=h*.72f-t*14*d+sin(t*2*Math.PI).toFloat()*2*d
@@ -178,8 +178,8 @@ class BrushPreview(context:Context,val preset:BrushPreset,var chosen:Boolean=fal
         p.style=Paint.Style.FILL;p.color=if(chosen)StudioColors.accentSoft else Color.TRANSPARENT;c.drawRoundRect(0f,0f,width.toFloat(),height.toFloat(),StudioShape.CORNER_DP*d,StudioShape.CORNER_DP*d,p)
         p.alpha=255
         if(eraser){p.color=0xffc6d1d7.toInt();c.drawRoundRect(4*d,24*d,width-4*d,height-4*d,StudioShape.CORNER_DP*d,StudioShape.CORNER_DP*d,p)}
-        stroke?.let{c.drawBitmap(it,0f,0f,p)}
-        p.color=Color.WHITE;p.textSize=11*d;p.typeface=Typeface.create("sans-serif-medium",Typeface.NORMAL);c.drawText(preset.name,7*d,15*d,p)
+        stroke?.let{if(StudioTheme.of(context).light && chosen && preset.colorMode=="Solid")p.colorFilter=PorterDuffColorFilter(Color.WHITE,PorterDuff.Mode.SRC_IN);c.drawBitmap(it,0f,0f,p);p.colorFilter=null}
+        p.color=if(chosen)Color.WHITE else StudioTheme.of(context).text;p.textSize=11*d;p.typeface=Typeface.create("sans-serif-medium",Typeface.NORMAL);c.drawText(preset.name,7*d,15*d,p)
         if(chosen){p.style=Paint.Style.STROKE;p.strokeWidth=1.5f*d;p.color=0xff8bd7ff.toInt();c.drawRoundRect(d,d,width-d,height-d,(StudioShape.CORNER_DP-1)*d,(StudioShape.CORNER_DP-1)*d,p);p.style=Paint.Style.FILL}
     }
 }

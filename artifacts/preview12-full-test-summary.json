@@ -1,0 +1,32 @@
+{
+  "version": "0.1.9-preview12",
+  "version_code": 30,
+  "android_unit_tests": {
+    "tests": 113,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "lint": {
+    "Error": 0,
+    "Fatal": 0,
+    "Warning": 117
+  },
+  "native_engine": "Unchanged from preview11; 75 Rust and 12 desktop Metal checks passed for that engine revision.",
+  "apk_native_matches_validated_binary": {
+    "arm64-v8a": true,
+    "x86_64": true
+  },
+  "apk_license_assets_match_source": {
+    "licenses/inkstone-legacy-MIT-through-v0.1.8.txt": true,
+    "licenses/ADDITIONAL_PERMISSIONS.md": true,
+    "licenses/inkstone-LICENSING.md": true,
+    "licenses/vectorcraft-MIT.txt": true,
+    "licenses/inkstone-LICENSE.txt": true
+  },
+  "apk_bytes": 10952463,
+  "apk_sha256": "7c14db00470f6d78f8eb2eaf2314dfd92d9c2d9e73df0c0e297819b5fcb02c73",
+  "signature_v2_verified": true,
+  "certificate_sha256": "23bd46ca626fc975136cf1b2b2772a3d56df2e3a7ddd28899a660880f498e5d3",
+  "device_tested": false
+}

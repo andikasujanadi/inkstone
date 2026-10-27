@@ -9,21 +9,22 @@ import kotlin.math.*
 
 internal class VectorEditorView(val activity:MainActivity,val document:VectorDocument):FrameLayout(activity){
     val canvas=VectorCanvas(activity,document).apply{onAtlas={activity.showAtlas(true)}}
+    private val theme get()=StudioTheme.of(activity)
     private val density=resources.displayMetrics.density
     private fun dp(v:Int)=(v*density).roundToInt()
     private val colorDrop by lazy{VectorColorDropController(this,canvas)}
-    private val toolbar=FrameLayout(activity).apply{setBackgroundColor(StudioColors.toolbar)}
-    private val rail=LinearLayout(activity).apply{orientation=LinearLayout.VERTICAL;gravity=Gravity.CENTER;setPadding(0,dp(10),0,dp(10));setBackgroundColor(StudioColors.rail);contentDescription="Vector side controls"}
+    private val toolbar=FrameLayout(activity).apply{setBackgroundColor(theme.toolbar)}
+    private val rail=LinearLayout(activity).apply{orientation=LinearLayout.VERTICAL;gravity=Gravity.CENTER;setPadding(0,dp(10),0,dp(10));setBackgroundColor(theme.rail);contentDescription="Vector side controls"}
     private lateinit var widthSlider:VerticalSlider
     private lateinit var alphaSlider:VerticalSlider
     private var compact=resources.configuration.orientation!=android.content.res.Configuration.ORIENTATION_LANDSCAPE || resources.displayMetrics.widthPixels/density<700
     private val barHeight get()=if(compact)88 else 44
     private var groupedShapes=false
-    private val history=FrameLayout(activity).apply{setBackgroundColor(StudioColors.toolbar);contentDescription="History and save"}
+    private val history=FrameLayout(activity).apply{setBackgroundColor(theme.toolbar);contentDescription="History and save"}
     private val galleryButton by lazy{button("Gallery"){activity.gallery()}.apply{textSize=17f;setPadding(dp(10),0,dp(10),0)}}
     private val saveButton by lazy{button("Save"){save()}.apply{translationX=dp(71).toFloat()}}
     private val icons=mutableMapOf<String,ToolIcon>()
-    private val nodeControls=LinearLayout(activity).apply{gravity=Gravity.CENTER;background=android.graphics.drawable.GradientDrawable().apply{setColor(StudioColors.surface);cornerRadius=dp(StudioShape.CORNER_DP).toFloat()}}
+    private val nodeControls=LinearLayout(activity).apply{gravity=Gravity.CENTER;background=android.graphics.drawable.GradientDrawable().apply{setColor(theme.surface);cornerRadius=dp(StudioShape.CORNER_DP).toFloat()}}
     private lateinit var nodeScroll:HorizontalScrollView
     private var panel:View?=null
     private var panelName=""
@@ -63,7 +64,7 @@ internal class VectorEditorView(val activity:MainActivity,val document:VectorDoc
     }
     private fun editableSelection():VectorObject?=canvas.selected?.takeIf{document.owner(it.id)?.effectiveLocked!=true}
     private fun button(label:String,chosen:Boolean=false,action:()->Unit)=TextView(activity).apply{
-        text=label;textSize=13f;setTextColor(if(chosen)StudioColors.accent else Color.WHITE);gravity=Gravity.CENTER
+        text=label;textSize=13f;setTextColor(if(chosen)StudioColors.accent else theme.text);gravity=Gravity.CENTER
         setPadding(dp(12),0,dp(12),0);contentDescription=label;isSingleLine=true;isClickable=true;isFocusable=true
         setOnClickListener{StudioMotion.bounce(this);action()}
     }
@@ -105,7 +106,7 @@ internal class VectorEditorView(val activity:MainActivity,val document:VectorDoc
         icons.forEach{(name,icon)->icon.activeTool=canvas.tool==name || name==panelName || name=="Shapes" && canvas.tool in listOf("Line","Rectangle","Ellipse");icon.swatch=canvas.ink;icon.invalidate()}
         widthSlider.value=sqrt((canvas.selected?.width?:canvas.strokeWidth)/160f)
         alphaSlider.value=Color.alpha(canvas.selected?.stroke?:canvas.ink)/255f
-        updateNodeControls();canvas.invalidate()
+        StudioTheme.apply(toolbar);StudioTheme.apply(history);StudioTheme.apply(nodeControls);updateNodeControls();canvas.invalidate()
     }
     private fun updateHud(slider:VerticalSlider,opacity:Boolean){
         hud.value=slider.value;hud.opacityMode=opacity;hud.soft=false
@@ -116,16 +117,16 @@ internal class VectorEditorView(val activity:MainActivity,val document:VectorDoc
     private fun panel(name:String,left:Boolean=false,body:(LinearLayout)->Unit){
         val old=if(replacingLayerPanel && panelName==name)panel else null
         if(old==null){if(panelName==name){dismissPanel();return};dismissPanel()};canvas.cancelGesture()
-        val content=LinearLayout(activity).apply{orientation=LinearLayout.VERTICAL;setPadding(dp(16),dp(16),dp(16),dp(16));background=android.graphics.drawable.GradientDrawable().apply{setColor(0xf025282c.toInt());cornerRadius=dp(StudioShape.CORNER_DP).toFloat()}}
+        val content=LinearLayout(activity).apply{orientation=LinearLayout.VERTICAL;setPadding(dp(16),dp(16),dp(16),dp(16));background=android.graphics.drawable.GradientDrawable().apply{setColor(theme.glass);cornerRadius=dp(StudioShape.CORNER_DP).toFloat()}}
         val heading=LinearLayout(activity).apply{gravity=Gravity.CENTER_VERTICAL}
-        heading.addView(TextView(activity).apply{text=name;textSize=26f;setTextColor(Color.WHITE);setTypeface(null,android.graphics.Typeface.BOLD)},LinearLayout.LayoutParams(0,dp(52),1f))
+        heading.addView(TextView(activity).apply{text=name;textSize=26f;setTextColor(theme.text);setTypeface(null,android.graphics.Typeface.BOLD)},LinearLayout.LayoutParams(0,dp(52),1f))
         heading.addView(ToolIcon(activity,"Close"){dismissPanel()},LinearLayout.LayoutParams(dp(44),dp(44)));content.addView(heading)
         val items=LinearLayout(activity).apply{orientation=LinearLayout.VERTICAL};body(items)
         content.addView(ScrollView(activity).apply{addView(items)},LinearLayout.LayoutParams(-1,-2))
         val pw=min(dp(430),(width.takeIf{it>0}?:resources.displayMetrics.widthPixels)-dp(56))
         if(old!=null)removeView(old)
         addView(content,LayoutParams(pw,min(dp(620),max(dp(160),height-dp(barHeight+60))),Gravity.TOP or if(left)Gravity.LEFT else Gravity.RIGHT).apply{topMargin=dp(barHeight);if(left)leftMargin=dp(48) else rightMargin=dp(10)})
-        panel=content;panelName=name;if(old==null)StudioMotion.reveal(content,if(left).15f else .85f);refresh()
+        StudioTheme.apply(content);panel=content;panelName=name;if(old==null)StudioMotion.reveal(content,if(left).15f else .85f);refresh()
     }
     private fun updateNodeControls(){
         nodeControls.removeAllViews();if(canvas.guides.editing){nodeScroll.visibility=VISIBLE;nodeControls.addView(button("Done editing guides"){canvas.guides.editing=false;canvas.guides.save();canvas.invalidate();refresh()});return};nodeScroll.visibility=if(canvas.tool=="Nodes" && canvas.selected!=null)VISIBLE else GONE
@@ -146,7 +147,7 @@ internal class VectorEditorView(val activity:MainActivity,val document:VectorDoc
     }
     private fun strokeSettings(){
         panel("Stroke settings",true){body->
-            val value=TextView(activity).apply{setTextColor(Color.WHITE);text="Stabilization ${(canvas.stabilization*100).roundToInt()}%"};body.addView(value)
+            val value=TextView(activity).apply{setTextColor(theme.text);text="Stabilization ${(canvas.stabilization*100).roundToInt()}%"};body.addView(value)
             body.addView(SeekBar(activity).apply{max=100;progress=(canvas.stabilization*100).roundToInt();contentDescription="Vector stabilization";progressTintList=android.content.res.ColorStateList.valueOf(StudioColors.accent)
                 setOnSeekBarChangeListener(object:SeekBar.OnSeekBarChangeListener{override fun onStartTrackingTouch(s:SeekBar){};override fun onStopTrackingTouch(s:SeekBar){activity.vectorStabilization=canvas.stabilization};override fun onProgressChanged(s:SeekBar,p:Int,user:Boolean){if(user){canvas.stabilization=p/100f;value.text="Stabilization $p%"}}})},LinearLayout.LayoutParams(-1,dp(48)))
             body.addView(TextView(activity).apply{text="0% follows input directly. Higher values reduce small shakes and add trailing behind the pen. The setting is saved for Vector canvases.";setTextColor(0xffb9c2ca.toInt())})
@@ -176,7 +177,7 @@ internal class VectorEditorView(val activity:MainActivity,val document:VectorDoc
                     minimumHeight = dp(52)
                 }
                 row.addView(TextView(activity).apply{
-                    text = name; textSize = 16f; setTextColor(Color.WHITE)
+                    text = name; textSize = 16f; setTextColor(theme.text)
                 }, LinearLayout.LayoutParams(0, -2, 1f))
                 row.addView(TextView(activity).apply{
                     text = if(isSetting) "Press a new key" else current.display()
@@ -228,7 +229,7 @@ internal class VectorEditorView(val activity:MainActivity,val document:VectorDoc
     }
     private fun colors(){
         canvas.cancelGesture();panel("Colors"){body->
-            val hex=EditText(activity).apply{setTextColor(Color.WHITE);setText(String.format("#%08X",canvas.ink));isSingleLine=true;contentDescription="Vector color hex"}
+            val hex=EditText(activity).apply{setTextColor(theme.text);setText(String.format("#%08X",canvas.ink));isSingleLine=true;contentDescription="Vector color hex"}
             val preview=View(activity).apply{setBackgroundColor(canvas.ink);contentDescription="Vector active color preview"}
             body.addView(preview,LinearLayout.LayoutParams(dp(42),dp(28)).apply{gravity=Gravity.RIGHT;bottomMargin=dp(8)})
             var syncing=false
@@ -307,7 +308,7 @@ internal class VectorEditorView(val activity:MainActivity,val document:VectorDoc
                 body.addView(row,LinearLayout.LayoutParams(-1,dp(68)).apply{leftMargin=if(group!=null)dp(20)else 0;bottomMargin=dp(4)})
             }
             document.groups.filter{seen.add(it.id)}.forEach{header(it)}
-            body.addView(button("Background colour"){canvas.edit{document.backgroundVisible=!document.backgroundVisible}},LinearLayout.LayoutParams(-1,dp(48)))
+            body.addView(button("Background colour"){backgroundSettings()},LinearLayout.LayoutParams(-1,dp(48)))
         }
     }
     private fun layerOptions(layer:VectorLayer){
@@ -349,6 +350,11 @@ internal class VectorEditorView(val activity:MainActivity,val document:VectorDoc
             }
         }.show()
     }
+    internal fun backgroundSettings(){panel("Background colour"){body->
+        body.addView(BackgroundControls(activity,document.background,document.backgroundVisible,{canvas.ink}){color,visible->
+            canvas.edit{if(color!=null)document.background=color;document.backgroundVisible=visible}
+        })
+    }}
     private fun preferences(){
         canvas.cancelGesture()
         val labels=arrayOf("Pen-only input","Protect controls from palm","Two-finger tap: Undo","Three-finger tap: Redo")

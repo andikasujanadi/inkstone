@@ -52,6 +52,7 @@ internal class NewCanvasMenu(private val activity:MainActivity,private val close
 }
 
 internal class CanvasSetupView(private val activity:MainActivity,initialMode:String="raster"):FrameLayout(activity){
+    private val theme get()=StudioTheme.of(activity)
     private var mode=initialMode
     private val d=resources.displayMetrics.density
     private fun dp(n:Int)=(n*d).roundToInt()
@@ -65,8 +66,8 @@ internal class CanvasSetupView(private val activity:MainActivity,initialMode:Str
     private val values=mutableMapOf<String,TextView>()
     private val unitButtons=mutableMapOf<String,TextView>()
     private fun round(c:Int,r:Int)=GradientDrawable().apply{setColor(c);cornerRadius=dp(r).toFloat()}
-    private fun label(s:String,size:Float=17f,color:Int=0xffc5c5c5.toInt())=TextView(activity).apply{text=s;textSize=size;setTextColor(color);gravity=Gravity.CENTER_VERTICAL;setPadding(dp(20),0,dp(20),0)}
-    init{setBackgroundColor(0xff222222.toInt());contentDescription="Custom Canvas editor"}
+    private fun label(s:String,size:Float=17f,color:Int=theme.text)=TextView(activity).apply{text=s;textSize=size;setTextColor(theme.label(color));gravity=Gravity.CENTER_VERTICAL;setPadding(dp(20),0,dp(20),0)}
+    init{setBackgroundColor(theme.surface);contentDescription="Custom Canvas editor"}
     private var lastWidth=0;private var lastHeight=0
     override fun onMeasure(widthSpec:Int,heightSpec:Int){
         val w=MeasureSpec.getSize(widthSpec);val h=MeasureSpec.getSize(heightSpec)
@@ -91,7 +92,7 @@ internal class CanvasSetupView(private val activity:MainActivity,initialMode:Str
         val header=LinearLayout(activity).apply{gravity=Gravity.CENTER_VERTICAL}
         val title=label(canvasName,if(narrow)16f else 23f,Color.WHITE).apply{gravity=Gravity.CENTER;isClickable=true;contentDescription="Canvas name";setOnClickListener{activity.textDialog("Canvas name",canvasName){canvasName=it;text=it}}}
         header.addView(title,LinearLayout.LayoutParams(0,-1,1f))
-        header.addView(label("Cancel",14f).apply{setPadding(0,0,0,0);isSingleLine=true;gravity=Gravity.CENTER;background=round(StudioColors.workspace,StudioShape.CORNER_DP);isClickable=true;setOnClickListener{activity.showGallery()}},LinearLayout.LayoutParams(dp(78),dp(44)))
+        header.addView(ToolIcon(activity,"Close"){activity.showGallery()}.apply{contentDescription="Cancel";tooltipText="Cancel canvas creation";light=theme.light;background=round(theme.track,StudioShape.CORNER_DP)},LinearLayout.LayoutParams(dp(48),dp(44)))
         header.addView(label("✓",28f,Color.WHITE).apply{setPadding(0,0,0,0);gravity=Gravity.CENTER;contentDescription="Create custom canvas";background=round(blue,StudioShape.CORNER_DP);isClickable=true;isFocusable=true;setOnClickListener{create()}},LinearLayout.LayoutParams(dp(48),dp(48)).apply{setMargins(dp(10),0,dp(14),0)})
         addView(header,LayoutParams(-1,headerHeight).apply{leftMargin=side+dp(16)})
         details=LinearLayout(activity).apply{orientation=LinearLayout.VERTICAL;setPadding(dp(if(narrow)12 else 42),dp(18),dp(if(narrow)12 else 34),dp(10))}
@@ -111,10 +112,11 @@ internal class CanvasSetupView(private val activity:MainActivity,initialMode:Str
             "Canvas properties"->{
                 val g=group();g.addView(label("Background colour",18f),LinearLayout.LayoutParams(-1,dp(50)))
                 val swatches=LinearLayout(activity).apply{setPadding(dp(16),0,dp(16),dp(10))}
-                for(c in listOf(Color.WHITE,0xfffaf9f6.toInt(),0xff7e8587.toInt(),Color.BLACK))swatches.addView(View(activity).apply{background=round(c,StudioShape.CORNER_DP);contentDescription="Background #${Integer.toHexString(c)}";isClickable=true;setOnClickListener{bg=c;alpha=.65f}},LinearLayout.LayoutParams(0,dp(44),1f).apply{setMargins(dp(4),0,dp(4),0)})
+                for(c in listOf(Color.WHITE,0xfffaf9f6.toInt(),0xff7e8587.toInt(),Color.BLACK))swatches.addView(View(activity).apply{tag=StudioTheme.PRESERVE_COLOR;background=round(c,StudioShape.CORNER_DP);contentDescription="Background #${Integer.toHexString(c)}";isClickable=true;setOnClickListener{bg=c;alpha=.65f}},LinearLayout.LayoutParams(0,dp(44),1f).apply{setMargins(dp(4),0,dp(4),0)})
                 g.addView(swatches);val row=LinearLayout(activity).apply{gravity=Gravity.CENTER_VERTICAL};row.addView(label("Background hidden",16f),LinearLayout.LayoutParams(0,dp(54),1f));row.addView(StudioSwitch(activity,"Background hidden",transparent){transparent=it},LinearLayout.LayoutParams(dp(60),dp(44)));g.addView(row)
             }
         }
+        StudioTheme.apply(this)
     }
     private fun group():LinearLayout=LinearLayout(activity).apply{orientation=LinearLayout.VERTICAL;background=round(0xff2d2d2d.toInt(),StudioShape.CORNER_DP);details.addView(this,LinearLayout.LayoutParams(-1,-2).apply{bottomMargin=dp(20)})}
     private fun numberRow(parent:LinearLayout,name:String,editable:Boolean=true){
@@ -133,12 +135,13 @@ internal class CanvasSetupView(private val activity:MainActivity,initialMode:Str
     private fun update(){
         for((name,v)in values){
             v.text=if(name=="Layers"){"Memory dependent"}else (if(name==field)entry else display(name)) + if(name=="DPI")"" else when(unit){"Pixels"->" px";"Millimetres"->" mm";"Centimetres"->" cm";else->" in"}
-            v.setTextColor(if(name==field)Color.WHITE else 0xffa8a8a8.toInt())
+            v.setTextColor(if(name==field)Color.WHITE else theme.secondary)
         }
-        unitButtons.forEach{(name,v)->v.background=round(if(name==unit)0xffcccccc.toInt() else 0xff383838.toInt(),StudioShape.CORNER_DP);v.setTextColor(if(name==unit)Color.BLACK else 0xffbdbdbd.toInt())}
+        unitButtons.forEach{(name,v)->v.background=round(if(name==unit)0xffcccccc.toInt() else 0xff383838.toInt(),StudioShape.CORNER_DP);v.setTextColor(if(name==unit)Color.BLACK else theme.secondary)}
+        StudioTheme.apply(this)
     }
     private fun addKeypad(w:Int,h:Int,keypadHeight:Int,side:Int,narrow:Boolean){
-        val pad=LinearLayout(activity).apply{gravity=Gravity.CENTER;setPadding(dp(8),dp(10),dp(8),dp(10));setBackgroundColor(0xff2d2d2d.toInt())}
+        val pad=LinearLayout(activity).apply{gravity=Gravity.CENTER;setPadding(dp(8),dp(10),dp(8),dp(10));setBackgroundColor(theme.track)}
         val units=LinearLayout(activity).apply{orientation=LinearLayout.VERTICAL}
         val unitWidth=if(narrow)dp(88) else dp(142)
         for(name in listOf("Millimetres","Centimetres","Inches","Pixels")){val v=label(name,if(narrow)12f else 15f).apply{gravity=Gravity.CENTER;setPadding(0,0,0,0);isClickable=true;setOnClickListener{commit();unit=name;entry=display(field);replace=true;update()}};unitButtons[name]=v;units.addView(v,LinearLayout.LayoutParams(unitWidth,0,1f).apply{setMargins(dp(3),dp(3),dp(9),dp(3))})};pad.addView(units,LinearLayout.LayoutParams(unitWidth,-1))

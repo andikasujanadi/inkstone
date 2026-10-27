@@ -31,8 +31,8 @@ internal class MulticolorControls(private val activity:MainActivity,private val 
         val row=LinearLayout(activity);val tiles=values.map{(title,key)->button(title){choose(key);save()}.also{row.addView(it,LayoutParams(-2,dp(44)).apply{rightMargin=dp(6)})} }
         horizontal(host,row)
         val refresh={tiles.forEachIndexed{i,v->v.background=shape(if(selected()==values[i].second)StudioColors.accent else StudioColors.track);v.isSelected=selected()==values[i].second}}
-        tiles.forEach{v->val old=v.text.toString();v.setOnClickListener{StudioMotion.bounce(v);choose(values.first{it.first==old}.second);refresh();save()}}
-        refresh();return refresh
+        tiles.forEach{v->val old=v.text.toString();v.setOnClickListener{StudioMotion.bounce(v);choose(values.first{it.first==old}.second);refresh();StudioTheme.apply(host);save()}}
+        StudioTheme.apply(host);refresh();return refresh
     }
     init{
         orientation=VERTICAL;setPadding(dp(8),0,dp(8),0)
@@ -59,7 +59,7 @@ internal class MulticolorControls(private val activity:MainActivity,private val 
         details.addView(label("Shorter cycles change color more often.",12f),LayoutParams(-1,dp(34)))
         refreshPreview()
     }
-    private fun refreshSwatches(){swatches.removeAllViews();colors.forEachIndexed{i,color->val chip=button("","Combination color ${i+1}"){editColor(i)}.apply{background=GradientDrawable().apply{shape=GradientDrawable.OVAL;setColor(color);setStroke(dp(1),0x55ffffff)};minimumHeight=0;setPadding(0,0,0,0)};swatches.addView(chip,LayoutParams(dp(36),dp(36)).apply{rightMargin=dp(8)})};if(colors.size<12)swatches.addView(button("+","Add brush color"){editColor(colors.size)},LayoutParams(dp(40),dp(40)))}
+    private fun refreshSwatches(){swatches.removeAllViews();colors.forEachIndexed{i,color->val chip=button("","Combination color ${i+1}"){editColor(i)}.apply{tag=StudioTheme.PRESERVE_COLOR;background=GradientDrawable().apply{shape=GradientDrawable.OVAL;setColor(color);setStroke(dp(1),0x55ffffff)};minimumHeight=0;setPadding(0,0,0,0)};swatches.addView(chip,LayoutParams(dp(36),dp(36)).apply{rightMargin=dp(8)})};if(colors.size<12)swatches.addView(button("+","Add brush color"){editColor(colors.size)},LayoutParams(dp(40),dp(40)))}
     private fun editColor(index:Int){editor.removeAllViews();editor.visibility=VISIBLE;var chosen=colors.getOrElse(index){session.color}
         val hex=EditText(activity).apply{setText(String.format("#%06X",chosen and 0xffffff));setTextColor(Color.WHITE);textSize=15f;isSingleLine=true;contentDescription="Brush color hex";background=shape(StudioColors.track);setPadding(dp(12),0,dp(12),0)}
         editor.addView(ColorDisc(activity,chosen,false){chosen=it;hex.setText(String.format("#%06X",it and 0xffffff))},LayoutParams(-1,dp(260)));editor.addView(hex,LayoutParams(-1,dp(44)))
@@ -68,14 +68,14 @@ internal class MulticolorControls(private val activity:MainActivity,private val 
         action("Apply","Apply brush color"){val parsed=runCatching{Color.parseColor(hex.text.toString())}.getOrNull();if(parsed==null)activity.message("Enter a valid hex color")else{if(index<colors.size)colors[index]=parsed else colors.add(parsed);brush.colorMode="Palette";sourceRefresh();refreshSwatches();editor.visibility=GONE;save()}}
         action("Cancel"){editor.visibility=GONE}
         horizontal(editor,actions)
-        if(index<colors.size){val order=LinearLayout(activity);fun move(title:String,to:Int){order.addView(button(title){if(to in colors.indices){colors.add(to,colors.removeAt(index));refreshSwatches();editor.visibility=GONE;save()}},LayoutParams(0,dp(44),1f))};move("←",index-1);move("→",index+1);order.addView(button("Remove"){if(colors.size>2){colors.removeAt(index);refreshSwatches();editor.visibility=GONE;save()}else activity.message("Keep at least two colors")},LayoutParams(0,dp(44),1f));editor.addView(order)}
+        if(index<colors.size){val order=LinearLayout(activity);fun move(title:String,to:Int){order.addView(button(title){if(to in colors.indices){colors.add(to,colors.removeAt(index));refreshSwatches();editor.visibility=GONE;save()}},LayoutParams(0,dp(44),1f))};move("←",index-1);move("→",index+1);order.addView(button("Remove"){if(colors.size>2){colors.removeAt(index);refreshSwatches();editor.visibility=GONE;save()}else activity.message("Keep at least two colors")},LayoutParams(0,dp(44),1f));editor.addView(order)};StudioTheme.apply(editor)
     }
 }
 
 internal class CycleSlider(context:android.content.Context,var value:Float,private val changed:(Float)->Unit):View(context){
     private val p=Paint(Paint.ANTI_ALIAS_FLAG)
     init{contentDescription="Color cycle slider";isFocusable=true;isClickable=true}
-    override fun onDraw(c:Canvas){val d=resources.displayMetrics.density;val left=12*d;val right=width-12*d;val x=left+(right-left)*(ln(value.coerceIn(20f,20000f)/20f)/ln(1000f));p.strokeWidth=4*d;p.strokeCap=Paint.Cap.ROUND;p.color=0xff4d535a.toInt();c.drawLine(left,height/2f,right,height/2f,p);p.color=StudioColors.accent;c.drawLine(left,height/2f,x,height/2f,p);p.color=Color.WHITE;c.drawCircle(x,height/2f,8*d,p)}
+    override fun onDraw(c:Canvas){val d=resources.displayMetrics.density;val left=12*d;val right=width-12*d;val x=left+(right-left)*(ln(value.coerceIn(20f,20000f)/20f)/ln(1000f));p.strokeWidth=4*d;p.strokeCap=Paint.Cap.ROUND;p.color=0xff4d535a.toInt();c.drawLine(left,height/2f,right,height/2f,p);p.color=StudioColors.accent;c.drawLine(left,height/2f,x,height/2f,p);p.color=StudioTheme.of(context).text;c.drawCircle(x,height/2f,8*d,p)}
     override fun onTouchEvent(e:MotionEvent):Boolean{if(e.actionMasked==MotionEvent.ACTION_DOWN||e.actionMasked==MotionEvent.ACTION_MOVE||e.actionMasked==MotionEvent.ACTION_UP){parent.requestDisallowInterceptTouchEvent(true);val d=resources.displayMetrics.density;value=20f*1000f.pow(((e.x-12*d)/(width-24*d).coerceAtLeast(1f)).coerceIn(0f,1f));changed(value);invalidate();if(e.actionMasked==MotionEvent.ACTION_UP)performClick();return true};return e.actionMasked==MotionEvent.ACTION_CANCEL}
     override fun performClick():Boolean{super.performClick();return true}
     override fun onKeyDown(keyCode:Int,event:KeyEvent):Boolean{if(keyCode==KeyEvent.KEYCODE_DPAD_LEFT||keyCode==KeyEvent.KEYCODE_DPAD_RIGHT){value=(value*if(keyCode==KeyEvent.KEYCODE_DPAD_RIGHT)1.1f else 1/1.1f).coerceIn(20f,20000f);changed(value);invalidate();return true};return super.onKeyDown(keyCode,event)}

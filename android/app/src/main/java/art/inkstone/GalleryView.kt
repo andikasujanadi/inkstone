@@ -18,15 +18,16 @@ class GalleryView(private val activity: MainActivity) : LinearLayout(activity) {
     private var filterTag=prefs.getString("tag",null)
     private var selecting=false
     private val selected=mutableSetOf<String>()
+    private val theme get()=StudioTheme.of(activity)
     private val blue=StudioColors.accent
     private var motion:GalleryMotion?=null
     private var renderedLocation:String?=null
     private val thumbnails=linkedMapOf<String,android.graphics.Bitmap>()
     private val artworkCards=mutableMapOf<String,View>()
-    private fun label(text:String,size:Float=15f,color:Int=Color.WHITE)=TextView(activity).apply{
-        this.text=text;textSize=size;setTextColor(color);gravity=Gravity.CENTER_VERTICAL;setPadding(dp(12),0,dp(12),0)
+    private fun label(text:String,size:Float=15f,color:Int=theme.text)=TextView(activity).apply{
+        this.text=text;textSize=size;setTextColor(theme.label(color));gravity=Gravity.CENTER_VERTICAL;setPadding(dp(12),0,dp(12),0)
     }
-    init {orientation=VERTICAL;setBackgroundColor(StudioColors.surface);rebuild()}
+    init {orientation=VERTICAL;setBackgroundColor(theme.surface);rebuild()}
     private fun rebuild(animate:Boolean=false,destination:String?=null,release:Pair<String,android.graphics.PointF>?=null){
         val oldScroll=(findViewWithTag<View>("gallery-scroll") as? ScrollView)?.scrollY?:0
         motion?.cancel(this);motion=if(animate && childCount>0)GalleryMotion.capture(this,destination,release)else null
@@ -88,7 +89,7 @@ class GalleryView(private val activity: MainActivity) : LinearLayout(activity) {
             }
         }
         scroll.addView(content);addView(scroll,LayoutParams(-1,0,1f))
-        if(selecting){val bottom=LinearLayout(activity).apply{gravity=Gravity.CENTER;setBackgroundColor(StudioColors.surface)}
+        if(selecting){val bottom=LinearLayout(activity).apply{gravity=Gravity.CENTER;setBackgroundColor(theme.surface)}
             bottom.addView(label("${selected.size} selected",14f,0xffbbbbbb.toInt()),LayoutParams(0,dp(60),1f))
             bottom.addView(label("Stack",15f,blue).apply{contentDescription="Move selected to stack";isFocusable=true;setOnClickListener{if(selected.isNotEmpty())chooseStack(selected.toList())}},LayoutParams(-2,dp(60)))
             bottom.addView(label("Tags",15f,blue).apply{contentDescription="Tag selected artworks";isFocusable=true;setOnClickListener{if(selected.isNotEmpty())editTags(selected.toList())}},LayoutParams(-2,dp(60)))
@@ -98,6 +99,7 @@ class GalleryView(private val activity: MainActivity) : LinearLayout(activity) {
             bottom.addView(label("Delete",15f,0xffff6258.toInt()).apply{isFocusable=true;setOnClickListener{deleteSelected()}},LayoutParams(-2,dp(60)));addView(HorizontalScrollView(activity).apply{isHorizontalScrollBarEnabled=false;addView(bottom)},LayoutParams(-1,dp(60)))
         }
         scroll.viewTreeObserver.addOnPreDrawListener(object:android.view.ViewTreeObserver.OnPreDrawListener{override fun onPreDraw():Boolean{if(scroll.viewTreeObserver.isAlive)scroll.viewTreeObserver.removeOnPreDrawListener(this);scroll.scrollTo(0,scrollPosition);return true}})
+        StudioTheme.apply(this)
         motion?.play(this)
     }
     internal fun handleBack():Boolean{

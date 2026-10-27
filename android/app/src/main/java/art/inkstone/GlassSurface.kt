@@ -6,7 +6,7 @@ import android.view.View
 import kotlin.math.*
 
 // Capture only the artwork view when a popover opens; never blur every pen sample.
-internal class GlassSurface(source:View,private val panelX:Float,private val panelY:Float,private val radius:Float):Drawable(){
+internal class GlassSurface(source:View,private val panelX:Float,private val panelY:Float,private val radius:Float,private val light:Boolean=false):Drawable(){
     private val paint=Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
     private val rect=RectF()
     private val scale=.16f
@@ -14,7 +14,7 @@ internal class GlassSurface(source:View,private val panelX:Float,private val pan
     init{
         val w=max(1,((source.width+source.left)*scale).roundToInt());val h=max(1,((source.height+source.top)*scale).roundToInt())
         image=Bitmap.createBitmap(w,h,Bitmap.Config.ARGB_8888)
-        val canvas=Canvas(image);canvas.drawColor(StudioColors.workspace);canvas.scale(scale,scale);canvas.translate(source.left.toFloat(),source.top.toFloat());source.draw(canvas)
+        val canvas=Canvas(image);canvas.drawColor(StudioTheme(light).workspace);canvas.scale(scale,scale);canvas.translate(source.left.toFloat(),source.top.toFloat());source.draw(canvas)
         val pixels=IntArray(w*h);val temp=IntArray(w*h);image.getPixels(pixels,0,w,0,0,w,h)
         val r=5
         for(pass in 0..1){
@@ -36,7 +36,7 @@ internal class GlassSurface(source:View,private val panelX:Float,private val pan
         val save=c.save();val path=Path().apply{addRoundRect(rect,radius,radius,Path.Direction.CW)};c.clipPath(path)
         val imageSave=c.save();c.translate(-panelX,-panelY);c.scale(1/scale,1/scale)
         paint.color=Color.WHITE;paint.alpha=255;c.drawBitmap(image,0f,0f,paint);c.restoreToCount(imageSave)
-        paint.color=StudioColors.glass;c.drawRect(rect,paint);c.restoreToCount(save)
+        paint.color=StudioTheme(light).glass;c.drawRect(rect,paint);c.restoreToCount(save)
     }
     override fun setAlpha(alpha:Int){}
     override fun setColorFilter(filter:ColorFilter?){}

@@ -6,13 +6,13 @@ Inkstone is a source-available drawing app for Android tablets and pressure-sens
 
 ![Inkstone — a drawing studio for Android tablets](artifacts/promotion/01-main.png)
 
-**0.1.9-preview11 early-development release:** Canvas Atlas shares the editor workspace; Multicolor has an integrated dark settings panel with editable swatches, 13 visual tip choices and adjustable color cycles. Adds group blend/opacity, personal brush categories and independent panel sizing. Retains the contribution from [andikasujanadi in PR #1](https://github.com/bramastahartono20/inkstone/pull/1). See [release instructions and limits](docs/LOCAL_PREVIEW_019_11.md).
+**0.1.9-preview12 early-development release:** fixes Background colour selection and replaces its platform menu with a shared editor picker in Raster/Vector. Light interface now covers toolbars, panels, brush previews, sliders, gallery and canvas creation. Retains Canvas Atlas, integrated Multicolor controls, group appearance and personal brush libraries from preview11. See [release instructions and limits](docs/LOCAL_PREVIEW_019_12.md).
 
 **Testing:** local regression/build checks are recorded in [verification](docs/VERIFICATION.md). Physical stylus behavior, Android Vulkan, animation pacing and device-reported Fade behavior still need testing. Current limitations are tracked in [known issues](docs/KNOWN_ISSUES.md).
 
 ## Download
 
-Get the **[0.1.9-preview11 APK](https://github.com/bramastahartono20/inkstone/releases/tag/v0.1.9-preview11)** from GitHub Releases. Requires Android 8.0 or later; ARM64 and x86-64 are included. Enable installation from the app used to open the APK when Android asks.
+Get the **[0.1.9-preview12 APK](https://github.com/bramastahartono20/inkstone/releases/tag/v0.1.9-preview12)** from GitHub Releases. Requires Android 8.0 or later; ARM64 and x86-64 are included. Enable installation from the app used to open the APK when Android asks.
 
 The preview uses package `art.inkstone.preview`. Install over an existing preview to retain local artwork. Artwork lives in app-private storage: export editable `.inkstone` backups before uninstalling or clearing app data. No account, server, internet permission, analytics, or subscription is required.
 
@@ -24,7 +24,7 @@ The preview uses package `art.inkstone.preview`. Install over an existing previe
 
 ![Multicolor brushes — make color your own](artifacts/promotion/04-multicolor-brushes.png)
 
-*Promotional illustrations created for preview10, using the Raster editor layout. The current downloadable build is preview11; artwork and UI details in these illustrations are illustrative.*
+*Promotional illustrations created for preview10, using the Raster editor layout. The current downloadable build is preview12; artwork and UI details in these illustrations are illustrative.*
 
 ## What you can try
 
@@ -73,7 +73,7 @@ export JAVA_HOME=/path/to/jdk-21
 bash scripts/build-android.sh
 ```
 
-Output from the current working tree: `releases/inkstone-0.1.9-preview11-debug.apk` (early-development preview). Open `android/` in Android Studio to edit or install on a device. Rebuild native libraries with `bash scripts/build-native.sh` after changing Rust. Preview APKs use debug signing; distribution requires maintaining the same signing certificate for updates.
+Output from the current working tree: `releases/inkstone-0.1.9-preview12-debug.apk` (early-development preview). Open `android/` in Android Studio to edit or install on a device. Rebuild native libraries with `bash scripts/build-native.sh` after changing Rust. Preview APKs use debug signing; distribution requires maintaining the same signing certificate for updates.
 
 ## Verify
 

@@ -70,9 +70,9 @@ internal class CanvasAtlas(private val activity:MainActivity){
     fun draw(c:Canvas,page:Matrix,w:Int,h:Int){
         capture(page,w,h)
         val world=camera?:return;val inverse=Matrix();world.invert(inverse);val viewport=RectF(0f,0f,w.toFloat(),h.toFloat());inverse.mapRect(viewport)
-        c.drawColor(StudioColors.workspace)
+        c.drawColor(StudioTheme.of(activity).workspace)
         val scale=FloatArray(9).also{world.getValues(it)}.let{hypot(it[0],it[3])}.coerceAtLeast(.001f)
-        val save=c.save();c.concat(world);paint.style=Paint.Style.STROKE;paint.color=0x10ffffff;paint.strokeWidth=.65f*d/scale
+        val save=c.save();c.concat(world);paint.style=Paint.Style.STROKE;paint.color=if(StudioTheme.of(activity).light)0x18000000 else 0x10ffffff;paint.strokeWidth=.65f*d/scale
         val step=max(16f,8*d/scale);var x=floor(viewport.left/step)*step;while(x<viewport.right){c.drawLine(x,viewport.top,x,viewport.bottom,paint);x+=step};var y=floor(viewport.top/step)*step;while(y<viewport.bottom){c.drawLine(viewport.left,y,viewport.right,y,paint);y+=step}
         val visible=artworks.indices.filter{RectF.intersects(viewport,rects[it])}.sortedBy{hypot(rects[it].centerX()-viewport.centerX(),rects[it].centerY()-viewport.centerY())}
         val nearby=visible.take(48).toSet()

@@ -57,7 +57,7 @@ internal class VectorCanvas(private val activity:MainActivity,val document:Vecto
     fun edit(change:()->Unit){cancelGesture();runCatching{document.edit(change)}.onFailure{activity.message(it.message?:"Could not change object")}.onSuccess{onChanged()};invalidate();onSelection()}
     override fun onDraw(c:Canvas){
         if(activity.atlas!=null)activity.atlas!!.draw(c,screenMatrix(),width,height)else{
-        c.drawColor(StudioColors.workspace);paint.color=0x0bffffff;paint.strokeWidth=density
+        c.drawColor(StudioTheme.of(context).workspace);paint.color=if(StudioTheme.of(context).light)0x18000000 else 0x0bffffff;paint.strokeWidth=density
         var x=0f;while(x<width){c.drawLine(x,0f,x,height.toFloat(),paint);x+=24*density};var y=0f;while(y<height){c.drawLine(0f,y,width.toFloat(),y,paint);y+=24*density}
         }
         val page=c.save();c.concat(screenMatrix());val clipped=c.save();c.clipRect(0f,0f,document.width.toFloat(),document.height.toFloat())

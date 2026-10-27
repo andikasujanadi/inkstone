@@ -1,8 +1,8 @@
 # Known issues
 
-## Current preview11
+## Current preview12
 
-Multicolor uses an editor-owned dark panel. Canvas Atlas shares the editor camera and shows inactive documents as bounded previews. Group blend/opacity and personal brushes are available. Physical Android testing is still required for stylus behavior, Fade starts, drag timing, navigation feel and Vulkan performance. Wet mix is an approximation, isolated Raster group compositing uses CPU patches, and nondefault group appearance is baked to a single PSD layer. Atlas positions, gallery metadata and personal brush libraries stay device-local. Groups/stacks are one level. See [current release instructions](LOCAL_PREVIEW_019_11.md). Older sections below record historical feedback rather than the current inventory.
+Background colour uses a shared editor picker and selecting a color restores background visibility. Light interface uses shared panel/control colors. Multicolor uses an editor-owned panel. Canvas Atlas shares the editor camera and shows inactive documents as bounded previews. Group blend/opacity and personal brushes are available. Physical Android testing is still required for stylus behavior, Fade starts, drag timing, navigation feel and Vulkan performance. Wet mix is an approximation, isolated Raster group compositing uses CPU patches, and nondefault group appearance is baked to a single PSD layer. Atlas positions, gallery metadata and personal brush libraries stay device-local. Groups/stacks are one level. See [current release instructions](LOCAL_PREVIEW_019_12.md). Older sections below record historical feedback rather than the current inventory.
 
 ## Local preview6 — awaiting device testing
 

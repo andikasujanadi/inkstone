@@ -59,24 +59,24 @@ internal class BrushHud(context:Context):View(context){
     init{isClickable=true;contentDescription="Brush preview. Tap to remember this slider position.";setOnClickListener{mark?.invoke()}}
     override fun onDraw(c:Canvas){
         val d=resources.displayMetrics.density;val w=width.toFloat();val h=height.toFloat()
-        p.shader=null;p.style=Paint.Style.FILL;p.color=0xee394146.toInt();c.drawRoundRect(0f,0f,w,h,StudioShape.CORNER_DP*d,StudioShape.CORNER_DP*d,p)
-        p.style=Paint.Style.STROKE;p.color=0xff758084.toInt();p.strokeWidth=d;c.drawRoundRect(d/2,d/2,w-d/2,h-d/2,StudioShape.CORNER_DP*d,StudioShape.CORNER_DP*d,p)
-        p.style=Paint.Style.FILL;p.color=0xffeef2f3.toInt();p.textSize=14*d;p.typeface=Typeface.create("sans-serif-medium",Typeface.NORMAL)
+        p.shader=null;p.style=Paint.Style.FILL;p.color=StudioTheme.of(context).glass;c.drawRoundRect(0f,0f,w,h,StudioShape.CORNER_DP*d,StudioShape.CORNER_DP*d,p)
+        p.style=Paint.Style.STROKE;p.color=StudioTheme.of(context).border;p.strokeWidth=d;c.drawRoundRect(d/2,d/2,w-d/2,h-d/2,StudioShape.CORNER_DP*d,StudioShape.CORNER_DP*d,p)
+        p.style=Paint.Style.FILL;p.color=StudioTheme.of(context).text;p.textSize=14*d;p.typeface=Typeface.create("sans-serif-medium",Typeface.NORMAL)
         c.drawText("${labelOverride?:if(opacityMode)"Opacity" else "Size"} ${(value*100).roundToInt()}%",12*d,23*d,p)
         p.strokeWidth=1.6f*d;c.drawLine(w-25*d,17*d,w-11*d,17*d,p);c.drawLine(w-18*d,10*d,w-18*d,24*d,p)
         val radius=if(opacityMode)w*.3f else (8+value*54)*d
         val cx=w/2;val cy=h*.59f
         if(soft)p.shader=RadialGradient(cx,cy,radius.coerceAtLeast(1f),intArrayOf(0xffdce7e9.toInt(),0x00dce7e9),null,Shader.TileMode.CLAMP)
-        p.color=0xffdce7e9.toInt();p.alpha=if(opacityMode)(value*255).toInt() else 255;c.drawCircle(cx,cy,radius,p);p.alpha=255;p.shader=null
+        p.color=if(StudioTheme.of(context).light)0xff536b80.toInt() else 0xffdce7e9.toInt();p.alpha=if(opacityMode)(value*255).toInt() else 255;c.drawCircle(cx,cy,radius,p);p.alpha=255;p.shader=null
     }
 }
 
-internal class CategoryIcon(context:Context,private val name:String,private val chosen:Boolean):View(context){
+internal class CategoryIcon(context:Context,private val name:String,var chosen:Boolean):View(context){
     private val p=Paint(Paint.ANTI_ALIAS_FLAG)
     private val path=Path()
     override fun onDraw(c:Canvas){
         c.save();c.translate(width/2f,height/2f);val scale=resources.displayMetrics.density;c.scale(scale,scale)
-        p.color=if(chosen)StudioColors.accentSoft else 0xffaab7bc.toInt();p.style=Paint.Style.STROKE;p.strokeWidth=1.7f;p.strokeCap=Paint.Cap.ROUND;p.strokeJoin=Paint.Join.ROUND
+        p.color=if(chosen)Color.WHITE else StudioTheme.of(context).secondary;p.style=Paint.Style.STROKE;p.strokeWidth=1.7f;p.strokeCap=Paint.Cap.ROUND;p.strokeJoin=Paint.Join.ROUND
         path.reset()
         when(name){
             "Recent"->{for(i in 0..9){val a=(i*PI/5-PI/2);val r=if(i%2==0)8f else 3.5f;val x=cos(a).toFloat()*r;val y=sin(a).toFloat()*r;if(i==0)path.moveTo(x,y)else path.lineTo(x,y)};path.close();p.style=Paint.Style.FILL;c.drawPath(path,p)}
