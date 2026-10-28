@@ -83,6 +83,11 @@ internal class CanvasAtlas(private val activity:MainActivity){
             images[art.id]?.let{c.drawBitmap(it,null,r,paint)}?:run{if(i in nearby)requestPreview(art)}
         }
         c.restoreToCount(save)
+        if(picking)pickedColor?.let{color->
+            val x=pickLocation.x.coerceIn(30*d,max(30*d,w-30*d));val y=(pickLocation.y-54*d).coerceIn(30*d,max(30*d,h-30*d))
+            paint.style=Paint.Style.FILL;paint.color=color;c.drawCircle(x,y,24*d,paint)
+            paint.style=Paint.Style.STROKE;paint.strokeWidth=3*d;paint.color=Color.WHITE;c.drawCircle(x,y,24*d,paint);paint.style=Paint.Style.FILL
+        }
     }
     private fun requestPreview(art:Artwork){
         if(!alive || art.id in loading || art.id in failed || loading.size>=3)return
@@ -92,23 +97,51 @@ internal class CanvasAtlas(private val activity:MainActivity){
     }
     private fun worldPoint(x:Float,y:Float):PointF{val inverse=Matrix();camera?.invert(inverse);val p=floatArrayOf(x,y);inverse.mapPoints(p);return PointF(p[0],p[1])}
     private fun hit(x:Float,y:Float):Int{val p=worldPoint(x,y);val active=artworks.indexOfFirst{it.id==activeId};if(active>=0 && rects[active].contains(p.x,p.y))return active;return rects.indexOfLast{it.contains(p.x,p.y)}}
+    private var pickImage:Bitmap?=null;private var pickImageId="";private var pickLoading:String?=null;private var pickGeneration=0
+    private var picking=false
+    private var pickedColor:Int?=null
+    private var pickLocation=PointF()
+    private fun samplePreview(x:Float,y:Float){
+        val index=hit(x,y);if(index<0 || artworks[index].id==activeId)return
+        val id=artworks[index].id
+        if(pickImageId!=id && pickLoading!=id){
+            val generation=pickGeneration;pickLoading=id
+            activity.io.execute{val image=runCatching{activity.store.thumbnail(id)}.getOrNull();handler.post{
+                if(!alive || !picking || generation!=pickGeneration || hit(last.x,last.y).let{artworks.getOrNull(it)?.id}!=id){image?.recycle();if(pickLoading==id)pickLoading=null;return@post}
+                pickImage?.recycle();pickImage=image;pickImageId=id;pickLoading=null;samplePreview(last.x,last.y)
+            }}
+        }
+        val image=(if(pickImageId==id)pickImage else images[id])?:return
+        val point=worldPoint(x,y);val r=rects[index]
+        val color=image.getPixel(((point.x-r.left)/r.width()*image.width).toInt().coerceIn(0,image.width-1),((point.y-r.top)/r.height()*image.height).toInt().coerceIn(0,image.height-1))
+        pickedColor=color;pickLocation=PointF(x,y)
+        activity.session?.let{it.color=color;activity.editor?.refreshTools()}
+        activity.vectorEditor?.let{it.acceptAtlasColor(color)}
+        activity.savePreferences();invalidate()
+    }
+    private fun clearPick(){picking=false;pickedColor=null;pickGeneration++;pickLoading=null;pickImage?.recycle();pickImage=null;pickImageId=""}
+    private fun eyedropperSelected()=activity.session?.tool=="Eyedropper" || activity.vectorEditor?.canvas?.tool=="Eyedropper"
     private var consuming=false;private var down=PointF();private var last=PointF();private var downHit=-1;private var moved=false;private var multi=false
     private var distance=0f;private var angle=0f;private var center=PointF();private var dragging=-1
     private var applyCamera:((Matrix)->Unit)?=null;private var touchedView:View?=null
-    private val hold=Runnable{if(consuming && !multi && downHit>=0){dragging=downHit;moved=true;touchedView?.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);invalidate()}}
+    private val hold=Runnable{if(consuming && !multi && downHit>=0){
+        if(editing){picking=true;samplePreview(last.x,last.y)}else dragging=downHit
+        moved=true;touchedView?.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);invalidate()
+    }}
     private fun updateCamera(){pageCamera(viewWidth,viewHeight)?.let{applyCamera?.invoke(it)};invalidate()}
     fun touch(e:MotionEvent,view:View,page:Matrix,setCamera:(Matrix)->Unit):Boolean{
         if(activity.navigationBusy || pending!=null)return true
         if(e.actionMasked==MotionEvent.ACTION_DOWN){capture(page,view.width,view.height);downHit=hit(e.x,e.y);consuming=!editing || downHit<0 || artworks.getOrNull(downHit)?.id!=activeId
             if(!consuming)return false
             if(activity.editor?.dismissPanel()==true || activity.vectorEditor?.dismissPanel()==true)downHit=-1
-            down=PointF(e.x,e.y);last=PointF(e.x,e.y);moved=false;multi=false;dragging=-1;applyCamera=setCamera;touchedView=view;handler.postDelayed(hold,420)
+            down=PointF(e.x,e.y);last=PointF(e.x,e.y);moved=false;multi=false;dragging=-1;picking=false;pickedColor=null;applyCamera=setCamera;touchedView=view;if(eyedropperSelected() && downHit>=0){picking=true;moved=true;samplePreview(e.x,e.y)}else handler.postDelayed(hold,420)
         }
         if(!consuming)return false
         when(e.actionMasked){
-            MotionEvent.ACTION_POINTER_DOWN->{handler.removeCallbacks(hold);if(dragging>=0){rects[dragging].set(layout.rect(artworks[dragging],dragging));dragging=-1};multi=true;moved=true;distance=hypot(e.getX(1)-e.getX(0),e.getY(1)-e.getY(0));angle=atan2(e.getY(1)-e.getY(0),e.getX(1)-e.getX(0));center=PointF((e.getX(0)+e.getX(1))/2,(e.getY(0)+e.getY(1))/2)}
+            MotionEvent.ACTION_POINTER_DOWN->{clearPick();handler.removeCallbacks(hold);if(dragging>=0){rects[dragging].set(layout.rect(artworks[dragging],dragging));dragging=-1};multi=true;moved=true;distance=hypot(e.getX(1)-e.getX(0),e.getY(1)-e.getY(0));angle=atan2(e.getY(1)-e.getY(0),e.getX(1)-e.getX(0));center=PointF((e.getX(0)+e.getX(1))/2,(e.getY(0)+e.getY(1))/2)}
             MotionEvent.ACTION_MOVE->{
                 val world=camera?:return true
+                if(picking){samplePreview(e.x,e.y);last=PointF(e.x,e.y);return true}
                 if(multi){if(e.pointerCount>=2){val mid=PointF((e.getX(0)+e.getX(1))/2,(e.getY(0)+e.getY(1))/2);val len=hypot(e.getX(1)-e.getX(0),e.getY(1)-e.getY(0));val nextAngle=atan2(e.getY(1)-e.getY(0),e.getX(1)-e.getX(0));var delta=nextAngle-angle;while(delta>Math.PI)delta-=(2*Math.PI).toFloat();while(delta< -Math.PI)delta+=(2*Math.PI).toFloat()
                     val current=FloatArray(9).also{world.getValues(it)}.let{hypot(it[0],it[3])};val ratio=(if(distance>0)len/distance else 1f).coerceIn(.04f/current,30f/current)
                     world.postScale(ratio,ratio,center.x,center.y);world.postRotate(delta*180f/Math.PI.toFloat(),center.x,center.y);world.postTranslate(mid.x-center.x,mid.y-center.y);center=mid;distance=len;angle=nextAngle;updateCamera()};return true}
@@ -120,10 +153,10 @@ internal class CanvasAtlas(private val activity:MainActivity){
             MotionEvent.ACTION_UP->{handler.removeCallbacks(hold)
                 if(dragging>=0){val r=rects[dragging];layout.move(artworks[dragging].id,r.left,r.top);dragging=-1}
                 else if(!moved && !multi && downHit>=0 && hit(e.x,e.y)==downHit){val art=artworks[downHit];if(art.id==activeId)activateCurrent()else{pending=art.id;activity.activateAtlasArtwork(art)}}
-                consuming=false;multi=false;view.performClick();invalidate()
+                clearPick();consuming=false;multi=false;view.performClick();invalidate()
             }
-            MotionEvent.ACTION_CANCEL->{handler.removeCallbacks(hold);if(dragging>=0){rects[dragging].set(layout.rect(artworks[dragging],dragging));dragging=-1;updateCamera()};consuming=false;multi=false}
+            MotionEvent.ACTION_CANCEL->{handler.removeCallbacks(hold);if(dragging>=0){rects[dragging].set(layout.rect(artworks[dragging],dragging));dragging=-1;updateCamera()};clearPick();consuming=false;multi=false}
         };return true
     }
-    fun close(){alive=false;handler.removeCallbacks(hold);images.values.forEach{it.recycle()};images.clear();applyCamera=null;touchedView=null}
+    fun close(){alive=false;clearPick();handler.removeCallbacks(hold);images.values.forEach{it.recycle()};images.clear();applyCamera=null;touchedView=null}
 }

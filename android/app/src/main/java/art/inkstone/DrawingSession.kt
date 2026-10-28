@@ -11,17 +11,10 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
 data class BrushPreset(val name: String, val group: String, val kind: Int, val size: Float,
-    val flow: Float = 1f, val pressureSize: Float = .8f, val pressureOpacity: Float = 0f, val fadeLength:Float=0f,val customId:String="",val opacity:Float=1f,val stabilization:Float=.12f,val hardness:Float=1f,val colorMode:String="Solid",val colorCycle:Float=600f,val wetMix:Float=0f,val palette:List<Int> = emptyList(),val colorLayout:String="Along")
+    val flow: Float = 1f, val pressureSize: Float = .8f, val pressureOpacity: Float = 0f, val fadeLength:Float=0f,val customId:String="",val opacity:Float=1f,val stabilization:Float=.12f,val hardness:Float=1f,val colorMode:String="Solid",val colorCycle:Float=600f,val wetMix:Float=0f,val palette:List<Int> = emptyList(),val colorLayout:String="Along",val wetPickup:Float=.35f,val wetness:Float=.5f)
 
 val brushPresets = listOf(
     BrushPreset("Studio Pen", "Inking", 0, 12f),
-    BrushPreset("Rainbow Ink","Artistic",0,32f,pressureSize=.2f,colorMode="Rainbow",colorLayout="Across"),
-    BrushPreset("Rainbow Pencil","Artistic",1,20f,.8f,.5f,.3f,colorMode="Rainbow",colorLayout="Bristles"),
-    BrushPreset("Rainbow Bristle","Artistic",11,70f,.8f,.3f,.1f,colorMode="Rainbow",colorLayout="Bristles"),
-    BrushPreset("Rainbow Wash","Artistic",4,100f,.7f,.15f,.3f,colorMode="Rainbow",colorLayout="Across"),
-    BrushPreset("Rainbow Chalk","Artistic",13,45f,.8f,.3f,.2f,colorMode="Rainbow",colorLayout="Bristles"),
-    BrushPreset("Rainbow Marker","Artistic",12,42f,.8f,.2f,colorMode="Rainbow",colorLayout="Across"),
-    BrushPreset("Rainbow Ribbon","Artistic",7,55f,.9f,.2f,colorMode="Rainbow",colorLayout="Across"),
     BrushPreset("Pastel Threads","Artistic",14,64f,.8f,.2f,.1f,colorMode="Palette",palette=listOf(0xffd78a99.toInt(),0xffe7c686.toInt(),0xff8bc6b6.toInt(),0xff939fd0.toInt()),colorLayout="Bristles"),
     BrushPreset("Palette Ribbon","Artistic",7,45f,pressureSize=.2f,colorMode="Palette",palette=listOf(0xffed7768.toInt(),0xffebc66a.toInt(),0xff6096cc.toInt())),
     BrushPreset("Wet Paint","Painting",11,55f,.7f,.35f,.2f,wetMix=.45f),
@@ -110,6 +103,9 @@ class DrawingSession(width: Int, height: Int) : Closeable {
     private val renderPending = AtomicBoolean(false)
     internal var frameSerial=0L;private set
     var onFrame: () -> Unit = {}
+    internal var onColorUsed:(Int)->Unit={}
+    private var strokeRecentColor:Int?=null
+    private var dropRecentColor:Int?=null
     var onInfo: () -> Unit = {}
     var onError: (String) -> Unit = {}
     var onHistoryNotice:(String)->Unit={}
@@ -120,8 +116,9 @@ class DrawingSession(width: Int, height: Int) : Closeable {
     class ToolBrush(var preset:BrushPreset){
         var size=preset.size;var opacity=1f;var flow=preset.flow
         var pressureSize=preset.pressureSize;var pressureOpacity=preset.pressureOpacity;var fadeLength=preset.fadeLength
-        var kind=preset.kind;var colorLayout=preset.colorLayout;var colorMode=preset.colorMode;var colorCycle=preset.colorCycle;var wetMix=preset.wetMix;var palette=preset.palette
+        var kind=preset.kind;var colorLayout=preset.colorLayout;var colorMode=preset.colorMode;var colorCycle=preset.colorCycle;var wetMix=preset.wetMix;var wetPickup=preset.wetPickup;var wetness=preset.wetness;var palette=preset.palette
     }
+    var paintMixingEnabled=false
     val paintBrush=ToolBrush(brushPresets[0])
     val smudgeBrush=ToolBrush(brushPresets.find { it.name == "Medium Blend" } ?: brushPresets[0])
     val eraseBrush=ToolBrush(brushPresets[0])
@@ -191,9 +188,13 @@ class DrawingSession(width: Int, height: Int) : Closeable {
 
     var onBrushChosen: (String,BrushPreset)->Unit = {_,_->}
     fun choose(p: BrushPreset) {
+        val keepMix=tool=="Paint" && paintMixingEnabled && p.wetMix==0f
+        val mixing=Triple(currentBrush.wetMix,currentBrush.wetPickup,currentBrush.wetness)
+        if(tool=="Paint")paintMixingEnabled=paintMixingEnabled || p.wetMix>0f
         preset = p; size = p.size; flow = p.flow; pressureSize = p.pressureSize; pressureOpacity = p.pressureOpacity;fadeLength=p.fadeLength
         if(p.customId.isNotEmpty()){opacity=p.opacity;stabilization=p.stabilization;if(tool=="Erase")eraserHardness=p.hardness}
-        currentBrush.kind=p.kind;currentBrush.colorLayout=p.colorLayout;currentBrush.colorMode=p.colorMode;currentBrush.colorCycle=p.colorCycle;currentBrush.wetMix=p.wetMix;currentBrush.palette=p.palette
+        currentBrush.kind=p.kind;currentBrush.colorLayout=p.colorLayout;currentBrush.colorMode=p.colorMode;currentBrush.colorCycle=p.colorCycle;currentBrush.wetMix=p.wetMix;currentBrush.wetPickup=p.wetPickup;currentBrush.wetness=p.wetness;currentBrush.palette=p.palette
+        if(keepMix){currentBrush.wetMix=mixing.first;currentBrush.wetPickup=mixing.second;currentBrush.wetness=mixing.third}
         onBrushChosen(tool,p)
     }
 
@@ -209,7 +210,7 @@ class DrawingSession(width: Int, height: Int) : Closeable {
         val ink=if(erasing)(eraserHardness.coerceIn(0f,1f)*255+.5f).toInt() else color
         val timed=times!=null && times.size==input.size/4
         val samples=if(timed)FloatArray(input.size/4*5){i->if(i%5==4)times!![i/5] else input[i/5*4+i%5]}else input
-        val settings=StrokeSettings(kind,ink,if(dynamicBrushScaling)brush.size else brush.size/viewZoom.coerceAtLeast(.02f),brush.opacity,brush.flow,stabilization,if(pressureEnabled)brush.pressureSize else 0f,if(pressureEnabled)brush.pressureOpacity else 0f,brush.fadeLength,if(timed)5 else 4,org.json.JSONObject().put("op","brushEffects").put("mode",if(erasing || tool=="Smudge")"Solid" else brush.colorMode).put("layout",brush.colorLayout).put("cycle",brush.colorCycle.toDouble()).put("mix",if(erasing || tool=="Smudge")0.0 else brush.wetMix.toDouble()).put("palette",org.json.JSONArray(brush.palette.map{it.toLong() and 0xffffffffL})).toString())
+        val settings=StrokeSettings(kind,ink,if(dynamicBrushScaling)brush.size else brush.size/viewZoom.coerceAtLeast(.02f),brush.opacity,brush.flow,stabilization,if(pressureEnabled)brush.pressureSize else 0f,if(pressureEnabled)brush.pressureOpacity else 0f,brush.fadeLength,if(timed)5 else 4,org.json.JSONObject().put("op","brushEffects").put("mode",if(erasing || tool=="Smudge")"Solid" else brush.colorMode).put("layout",brush.colorLayout).put("cycle",brush.colorCycle.toDouble()).put("mix",if(erasing || tool=="Smudge" || !paintMixingEnabled)0.0 else brush.wetMix.toDouble()).put("pickup",brush.wetPickup.toDouble()).put("wetness",brush.wetness.toDouble()).put("palette",org.json.JSONArray(brush.palette.map{it.toLong() and 0xffffffffL})).toString())
         synchronized(inputLock){
             if(phase==1){
                 val pending=pendingMoves
@@ -225,13 +226,18 @@ class DrawingSession(width: Int, height: Int) : Closeable {
             }else{
                 pendingMoves=null
                 worker.execute{
-                    if(!disposed){sendStroke(phase,samples,settings);if(phase==2||phase==3)readInfo();changed()}
+                    if(!disposed){sendStroke(phase,samples,settings);if(phase==2||phase==3)readInfo()
+                        if(phase==2){val used=strokeRecentColor;strokeRecentColor=null;if(used!=null && info.isNull("inputError"))main.post{if(!closed)onColorUsed(used)}}
+                        if(phase==3)strokeRecentColor=null
+                        changed()}
                 }
             }
         }
     }
     private var shapeStroke=false
     private fun sendStroke(phase:Int,samples:FloatArray,s:StrokeSettings){
+        if(phase==0){strokeRecentColor=if(s.kind in 0..63 && s.kind !in listOf(5,6) && s.opacity>0 && s.flow>0 && !info.optBoolean("maskEditing") && info.optJSONArray("layers")?.optJSONObject(info.optInt("active"))?.optBoolean("locked")==false)s.color else null}
+        if(phase==3)strokeRecentColor=null
         if(phase==0 || phase==3)shapeStroke=false
         if(phase==0 && s.effects!="{}")NativeBridge.command(handle,s.effects)
         NativeBridge.stroke(handle,phase,samples,s.kind,s.color,s.size,s.opacity,s.flow,s.smooth,s.pressureSize,s.pressureOpacity,s.fadeLength,s.sampleStride)
@@ -264,6 +270,7 @@ class DrawingSession(width: Int, height: Int) : Closeable {
     private var dropQueued=false
     fun previewColorDrop(values:JSONObject){
         if(closed)return
+        dropRecentColor=values.optLong("color",color.toLong() and 0xffffffffL).toInt()
         dropActive=true;dropGeneration.incrementAndGet()
         synchronized(inputLock){
             pendingDrop=values
@@ -281,7 +288,8 @@ class DrawingSession(width: Int, height: Int) : Closeable {
     }
     fun finishColorDrop(cancel:Boolean,then:()->Unit){
         val generation=dropGeneration.get()
-        command(if(cancel)"floodCancel" else "floodCommit"){if(dropGeneration.get()==generation)dropActive=false;then()}
+        val used=dropRecentColor
+        command(if(cancel)"floodCancel" else "floodCommit"){result->if(dropGeneration.get()==generation){dropActive=false;dropRecentColor=null};if(!cancel && !result.has("error") && used!=null)onColorUsed(used);then()}
     }
 
     fun command(op: String, values: JSONObject = JSONObject(), then: (JSONObject) -> Unit = {}) {
@@ -295,7 +303,7 @@ class DrawingSession(width: Int, height: Int) : Closeable {
             if (result.has("error")) main.post { if (!closed) onError(result.getString("error")) }
             else if (result.has("layers")) info = result
             changed()
-            main.post { if (!closed) { onInfo();if(op in listOf("undo","redo") && !result.has("error"))onHistoryNotice(result.optString("historyNotice"));then(result) } }
+            main.post { if (!closed) { onInfo();if(op in listOf("flood","fill") && !result.has("error") && !info.optBoolean("maskEditing"))onColorUsed(values.optLong("color",color.toLong() and 0xffffffffL).toInt());if(op in listOf("undo","redo") && !result.has("error"))onHistoryNotice(result.optString("historyNotice"));then(result) } }
         }
     }
 

@@ -21,8 +21,10 @@ internal class VectorEditorView(val activity:MainActivity,val document:VectorDoc
     private val barHeight get()=if(compact)88 else 44
     private var groupedShapes=false
     private val history=FrameLayout(activity).apply{setBackgroundColor(theme.toolbar);contentDescription="History and save"}
-    private val galleryButton by lazy{button("Gallery"){activity.gallery()}.apply{textSize=17f;setPadding(dp(10),0,dp(10),0)}}
+    private val galleryButton by lazy{GalleryButton(activity){activity.gallery()}}
     private val saveButton by lazy{button("Save"){save()}.apply{translationX=dp(71).toFloat()}}
+    private val saveWidth get()=max(dp(54),ceil(saveButton.paint.measureText(saveButton.text.toString())).toInt()+saveButton.paddingLeft+saveButton.paddingRight)
+    private val historyWidth get()=max(dp(196),2*(dp(44)+saveWidth))
     private val icons=mutableMapOf<String,ToolIcon>()
     private val nodeControls=LinearLayout(activity).apply{gravity=Gravity.CENTER;background=android.graphics.drawable.GradientDrawable().apply{setColor(theme.surface);cornerRadius=dp(StudioShape.CORNER_DP).toFloat()}}
     private lateinit var nodeScroll:HorizontalScrollView
@@ -73,7 +75,7 @@ internal class VectorEditorView(val activity:MainActivity,val document:VectorDoc
         toolbar.removeAllViews();(history.parent as? ViewGroup)?.removeView(history);history.removeAllViews();icons.clear()
         val left=LinearLayout(activity).apply{gravity=Gravity.CENTER_VERTICAL}
         (galleryButton.parent as? ViewGroup)?.removeView(galleryButton)
-        left.addView(galleryButton,LinearLayout.LayoutParams(dp(84),dp(44)))
+        left.addView(galleryButton,LinearLayout.LayoutParams(galleryButton.requiredWidth,dp(44)))
         left.addView(tool("Actions"){actions()},LinearLayout.LayoutParams(dp(40),dp(44)))
         if(groupedShapes)left.addView(tool("Shapes","Rectangle"){AlertDialog.Builder(activity).setTitle("Shape").setItems(arrayOf("Line","Rectangle","Ellipse")){_,i->dismissPanel();canvas.changeTool(listOf("Line","Rectangle","Ellipse")[i])}.show()},LinearLayout.LayoutParams(dp(40),dp(44)))
         for(name in if(groupedShapes)listOf("Pen","Nodes","Select") else listOf("Pen","Line","Rectangle","Ellipse","Nodes","Select"))left.addView(tool(name,if(name=="Pen")"Paint" else if(name=="Select")"Transform" else name){dismissPanel();canvas.changeTool(name)},LinearLayout.LayoutParams(dp(40),dp(44)))
@@ -86,14 +88,15 @@ internal class VectorEditorView(val activity:MainActivity,val document:VectorDoc
         undoRedo.addView(tool("Redo"){canvas.redo()},LinearLayout.LayoutParams(dp(44),dp(44)))
         history.addView(undoRedo,LayoutParams(dp(88),dp(44),Gravity.CENTER))
         (saveButton.parent as? ViewGroup)?.removeView(saveButton)
-        history.addView(saveButton,LayoutParams(dp(54),dp(44),Gravity.CENTER))
+        saveButton.translationX=dp(44)+saveWidth/2f
+        history.addView(saveButton,LayoutParams(saveWidth,dp(44),Gravity.CENTER))
         toolbar.addView(left,LayoutParams(-2,dp(44),Gravity.TOP or Gravity.LEFT))
         toolbar.addView(right,LayoutParams(-2,dp(44),Gravity.TOP or Gravity.RIGHT).apply{topMargin=if(compact)dp(44) else 0})
         if(compact)addView(history,LayoutParams(-1,dp(44),Gravity.BOTTOM))
-        else toolbar.addView(history,LayoutParams(dp(196),dp(44),Gravity.CENTER))
+        else toolbar.addView(history,LayoutParams(historyWidth,dp(44),Gravity.CENTER))
     }
     override fun onMeasure(wSpec:Int,hSpec:Int){
-        val w=MeasureSpec.getSize(wSpec);val h=MeasureSpec.getSize(hSpec);val next=w<h || w/density<700
+        val w=MeasureSpec.getSize(wSpec);val h=MeasureSpec.getSize(hSpec);val next=w<h || w<max(dp(700),2*(galleryButton.requiredWidth+dp(if(w/density<820)200 else 280))+historyWidth+dp(24))
         val group=w/density<820
         if(next!=compact || group!=groupedShapes){compact=next;groupedShapes=group;dismissPanel();buildToolbar();refresh()}
         (toolbar.layoutParams as LayoutParams).height=dp(barHeight)
@@ -102,6 +105,7 @@ internal class VectorEditorView(val activity:MainActivity,val document:VectorDoc
         (nodeScroll.layoutParams as LayoutParams).apply{bottomMargin=dp(if(compact)52 else 12);width=min(dp(536),max(dp(128),w-dp(80)))}
         super.onMeasure(wSpec,hSpec)
     }
+    internal fun acceptAtlasColor(color:Int){canvas.ink=color;refresh();canvas.invalidate()}
     fun refresh(){
         icons.forEach{(name,icon)->icon.activeTool=canvas.tool==name || name==panelName || name=="Shapes" && canvas.tool in listOf("Line","Rectangle","Ellipse");icon.swatch=canvas.ink;icon.invalidate()}
         widthSlider.value=sqrt((canvas.selected?.width?:canvas.strokeWidth)/160f)
@@ -119,7 +123,8 @@ internal class VectorEditorView(val activity:MainActivity,val document:VectorDoc
         if(old==null){if(panelName==name){dismissPanel();return};dismissPanel()};canvas.cancelGesture()
         val content=LinearLayout(activity).apply{orientation=LinearLayout.VERTICAL;setPadding(dp(16),dp(16),dp(16),dp(16));background=android.graphics.drawable.GradientDrawable().apply{setColor(theme.glass);cornerRadius=dp(StudioShape.CORNER_DP).toFloat()}}
         val heading=LinearLayout(activity).apply{gravity=Gravity.CENTER_VERTICAL}
-        heading.addView(TextView(activity).apply{text=name;textSize=26f;setTextColor(theme.text);setTypeface(null,android.graphics.Typeface.BOLD)},LinearLayout.LayoutParams(0,dp(52),1f))
+        heading.minimumHeight=dp(52)
+        heading.addView(TextView(activity).apply{text=name;textSize=26f;setTextColor(theme.text);maxLines=3;setPadding(0,dp(8),0,dp(8));setTypeface(null,android.graphics.Typeface.BOLD)},LinearLayout.LayoutParams(0,-2,1f))
         heading.addView(ToolIcon(activity,"Close"){dismissPanel()},LinearLayout.LayoutParams(dp(44),dp(44)));content.addView(heading)
         val items=LinearLayout(activity).apply{orientation=LinearLayout.VERTICAL};body(items)
         content.addView(ScrollView(activity).apply{addView(items)},LinearLayout.LayoutParams(-1,-2))
@@ -229,6 +234,7 @@ internal class VectorEditorView(val activity:MainActivity,val document:VectorDoc
     }
     private fun colors(){
         canvas.cancelGesture();panel("Colors"){body->
+            body.addView(RecentColorRow(activity){canvas.ink=it;dismissPanel();colors();refresh()})
             val hex=EditText(activity).apply{setTextColor(theme.text);setText(String.format("#%08X",canvas.ink));isSingleLine=true;contentDescription="Vector color hex"}
             val preview=View(activity).apply{setBackgroundColor(canvas.ink);contentDescription="Vector active color preview"}
             body.addView(preview,LinearLayout.LayoutParams(dp(42),dp(28)).apply{gravity=Gravity.RIGHT;bottomMargin=dp(8)})
@@ -254,7 +260,8 @@ internal class VectorEditorView(val activity:MainActivity,val document:VectorDoc
             for(label in listOf("Stroke","Fill","No fill"))choices.addView(button(label){
                 if(canvas.selected!=null && editableSelection()==null){activity.message("This layer is locked");return@button}
                 val color=runCatching{Color.parseColor(hex.text.toString().trim())}.getOrElse{activity.message("Invalid hex color");return@button}
-                canvas.edit{when(label){"Stroke"->{canvas.ink=color;editableSelection()?.stroke=color};"Fill"->{canvas.fillColor=color;editableSelection()?.takeIf{it.isClosed}?.fill=color};else->{canvas.fillColor=null;editableSelection()?.fill=null}}}
+                val used=editableSelection()?.takeIf{label=="Stroke" || label=="Fill" && it.isClosed}
+                canvas.edit{when(label){"Stroke"->{canvas.ink=color;editableSelection()?.stroke=color};"Fill"->{canvas.fillColor=color;editableSelection()?.takeIf{it.isClosed}?.fill=color};else->{canvas.fillColor=null;editableSelection()?.fill=null}}};if(used!=null)RecentColors(activity).record(color)
             },LinearLayout.LayoutParams(0,dp(48),1f));body.addView(choices)
         }
     }

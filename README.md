@@ -6,15 +6,24 @@ Inkstone is a source-available drawing app for Android tablets and pressure-sens
 
 ![Inkstone — custom drawing engine built in Rust](artifacts/promotion/01-main.png)
 
-**0.1.9-preview12 early-development release:** fixes Background colour selection and replaces its platform menu with a shared editor picker in Raster/Vector. Light interface now covers toolbars, panels, brush previews, sliders, gallery and canvas creation. Retains Canvas Atlas, integrated Multicolor controls, group appearance and personal brush libraries from preview11. See [release instructions and limits](docs/LOCAL_PREVIEW_019_12.md).
+**0.20 early-development release:** adds a dedicated Paint Mixing button, editor-owned brush controls, recent colors, direct hold-to-pick, and Atlas color sampling without switching canvases. Improves layer drop animations and large-font layouts. Multicolor remains inside Brush; redundant Rainbow presets have been removed. See [release instructions and limits](docs/RELEASE_0_20.md).
 
 **Testing:** local regression/build checks are recorded in [verification](docs/VERIFICATION.md). Physical stylus behavior, Android Vulkan, animation pacing and device-reported Fade behavior still need testing. Current limitations are tracked in [known issues](docs/KNOWN_ISSUES.md).
 
 ## Download
 
-Get the **[0.1.9-preview12 APK](https://github.com/bramastahartono20/inkstone/releases/tag/v0.1.9-preview12)** from GitHub Releases. Requires Android 8.0 or later; ARM64 and x86-64 are included. Enable installation from the app used to open the APK when Android asks.
+Get the **[0.20 APK](https://github.com/bramastahartono20/inkstone/releases/tag/v0.20)** from GitHub Releases. Requires Android 8.0 or later; ARM64 and x86-64 are included. Enable installation from the app used to open the APK when Android asks.
 
 The preview uses package `art.inkstone.preview`. Install over an existing preview to retain local artwork. Artwork lives in app-private storage: export editable `.inkstone` backups before uninstalling or clearing app data. No account, server, internet permission, analytics, or subscription is required.
+
+## New in 0.20
+
+<p align="center">
+  <img src="artifacts/promotion/05-paint-mixing.png" width="46%" alt="Inkstone Paint Mixing — experimental color mixing with a Rust drawing engine">
+  <img src="artifacts/promotion/06-canvas-atlas.png" width="46%" alt="Inkstone Canvas Atlas — browse your canvases in one workspace">
+</p>
+
+*Promotional illustrations, not app screenshots. Paint Mixing is experimental: the current RYB approximation does not simulate the thick paint or fluid effects illustrated above.*
 
 ## Canvas Atlas and Multicolor
 
@@ -24,16 +33,17 @@ The preview uses package `art.inkstone.preview`. Install over an existing previe
 
 ![Multicolor brushes — make color your own](artifacts/promotion/04-multicolor-brushes.png)
 
-*Promotional illustrations using the Raster editor layout. The cover highlights Inkstone’s own Rust drawing engine without a version label. The feature images were prepared for preview10; the current downloadable build is preview12. Artwork and UI details are illustrative.*
+*Promotional illustrations using the Raster editor layout. The cover highlights Inkstone’s own Rust drawing engine without a version label. The feature images were prepared for preview10; the current downloadable build is 0.20. Artwork and UI details are illustrative.*
 
 ## What you can try
 
 - **Organize the gallery:** sort by name or dates, tag/filter artworks, and create named stacks with artwork counts. Hold an artwork and drop it into a stack card or the Drag to destinations. Use ⋯ for artwork options, or Select for bulk tags/stack changes.
 
-- **Draw, smudge and erase:** 57 procedural presets, pressure controls, flow, stabilization and a global pressure toggle. Eraser has the same preset library, inverted previews and separate brush settings. Tap the Eraser icon to select it and open its library; the library's + button opens settings including edge hardness.
-- **Canvas Atlas:** pinch out to browse nearby artwork in the same workspace. Pan, zoom and rotate; tap an artwork to activate drawing in place. Hold and drag overview artworks to arrange them. Inactive canvases use cached previews.
+- **Draw, smudge and erase:** 50 procedural presets, pressure controls, flow, stabilization and a global pressure toggle. Eraser has the same preset library, inverted previews and separate brush settings. Tap the Eraser icon to select it and open its library; the library's + button opens settings including edge hardness.
+- **Canvas Atlas:** pinch out to browse nearby artwork in the same workspace. Pan, zoom and rotate; tap an artwork to activate drawing in place. Hold and drag overview artworks to arrange them. Inactive canvases use cached previews. Select Eyedropper and touch another visible artwork to sample its saved preview without switching documents.
 - **Multicolor and personal brushes:** open Brush Library → + → Brush Studio → Multicolor settings. Edit up to 12 colors, choose among 13 tip types, and adjust arrangement and cycle length. Save personal presets and categories from the library.
-- **ColorDrop:** drag the active color into an enclosed area, pause for the fill preview, then slide left/right to adjust threshold. Release to commit in one Undo step. Color selection includes a wheel, a square picker, hex/RGB values and palettes. In Raster mode, drag the rectangular preview at the top of Colors onto the palette to save it. Open **Palette → + New palette** or **Palettes → New palette** to create a named palette; custom palettes stay saved across artworks and app restarts.
+- **Paint Mixing (experimental):** tap the palette/swirl icon beside Brush. Adjust strength, pickup and wetness to mix with pre-existing paint on the active layer. Choose Brush to return to dry painting. Uses an approximate RYB model and CPU painting.
+- **ColorDrop:** drag the active color into an enclosed area, pause for the fill preview, then slide left/right to adjust threshold. Release to commit in one Undo step. Color selection includes a wheel, a square picker, hex/RGB values and palettes. In Raster mode, drag the rectangular preview at the top of Colors onto the palette to save it. Completed painting/fills add used colors to Recent colours automatically; hold still on the canvas to pick directly. Open **Palette → + New palette** or **Palettes → New palette** to create a named palette; custom palettes stay saved across artworks and app restarts.
 - **Layers:** add, rename, duplicate, reorder, lock, hide, adjust opacity, use alpha lock/clipping and fifteen blend modes. Indented folders support visibility/lock, collapse, group blend/opacity and animated layer drag/drop. Open a group’s blend/options button → Blend & opacity. Drag beyond a folder boundary to leave it. Swipe left on a layer for actions.
 - **Select and transform:** Automatic/freehand/rectangle/ellipse selection, Add/Remove/Invert, Feather, saved selections, clipboard actions, and Freeform/Uniform/Distort/Warp transforms. The compact bottom toolbar groups tools and scrolls horizontally. Corner and edge handles, free rotation, flips and two-finger object transforms are supported. Inserted images enter Transform automatically. Tap Done to apply.
 - **Pen and touch controls:** pen-only input, control palm protection, handedness, hover cursor, canvas-position lock, hold-to-shape fitting and gesture Undo/Redo.

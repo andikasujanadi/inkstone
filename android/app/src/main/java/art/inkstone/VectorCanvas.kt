@@ -35,7 +35,23 @@ internal class VectorCanvas(private val activity:MainActivity,val document:Vecto
     private var sampleTime=0L
     private var origin=PointF();private var originalMatrix=Matrix();private var anchor=PointF();private var node=-1
     private var gestureDistance=0f;private var gestureAngle=0f;private var gestureCenter=PointF();private var multi=false
-    val busy get()=pointer>=0 || multi
+    private var pickTouch:PointF?=null
+    private var holdOrigin=PointF()
+    private var pickingColor=false
+    private var pickBitmap:Bitmap?=null
+    private val holdColor=Runnable{
+        if(pointer>=0 && !multi && tool=="Pen"){
+            cancelGesture();pickingColor=true;pickAt(holdOrigin.x,holdOrigin.y)
+            performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+        }
+    }
+    private fun pickAt(x:Float,y:Float){
+        val point=pagePoint(x,y);if(point.x<0 || point.y<0 || point.x>=document.width || point.y>=document.height)return
+        val bitmap=pickBitmap?:Bitmap.createBitmap(1,1,Bitmap.Config.ARGB_8888).also{pickBitmap=it};bitmap.eraseColor(Color.TRANSPARENT)
+        val sample=Canvas(bitmap);sample.translate(-floor(point.x),-floor(point.y));document.draw(sample)
+        val color=bitmap.getPixel(0,0);if(Color.alpha(color)>0){ink=color;pickTouch=PointF(x,y);onSelection();invalidate()}
+    }
+    val busy get()=pointer>=0 || multi || pickingColor
     val selected get()=document.objectById(selectedId)
     init{isFocusable=true;contentDescription="Vector drawing canvas"}
     private fun screenMatrix()=Matrix().apply{postTranslate(-document.width/2f,-document.height/2f);postScale(zoom,zoom);postRotate(rotation);postTranslate(width/2f+pan.x,height/2f+pan.y)}
@@ -50,7 +66,7 @@ internal class VectorCanvas(private val activity:MainActivity,val document:Vecto
     fun fit(){if(width<=0 || height<=0)return;zoom=min((width-64*density)/document.width,(height-64*density)/document.height).coerceAtLeast(.01f);fitScale=zoom;pan=PointF();rotation=0f;fitted=true;invalidate()}
     override fun onSizeChanged(w:Int,h:Int,oldw:Int,oldh:Int){val camera=activity.atlas?.pageCamera(w,h);if(camera!=null)setAtlasCamera(camera)else if(!fitted || oldw!=w || oldh!=h)fit()}
     fun snapshot():ByteArray=before?.clone()?:document.encode()
-    fun cancelGesture(){before?.let{document.restore(it)};before=null;draft=null;pointer=-1;mode="";multi=false;invalidate();onSelection()}
+    fun cancelGesture(){removeCallbacks(holdColor);pickingColor=false;pickTouch=null;before?.let{document.restore(it)};before=null;draft=null;pointer=-1;mode="";multi=false;invalidate();onSelection()}
     fun changeTool(value:String){joiningPaths=false;addingAnchor=false;cancelGesture();if(value!="Nodes")selectedNode=null;tool=value;invalidate();onSelection()}
     fun undo(){addingAnchor=false;cancelGesture();if(document.undo()){selectedId=null;selectedNode=null;onChanged()};activity.message(document.historyNotice);invalidate();onSelection()}
     fun redo(){addingAnchor=false;cancelGesture();if(document.redo()){selectedId=null;selectedNode=null;onChanged()};activity.message(document.historyNotice);invalidate();onSelection()}
@@ -87,6 +103,7 @@ internal class VectorCanvas(private val activity:MainActivity,val document:Vecto
                 c.drawCircle(r.centerX(),r.top-24*density/zoom,5*density/zoom,paint)
             }
         };c.restoreToCount(page)
+        pickTouch?.let{p->paint.style=Paint.Style.FILL;paint.color=ink;c.drawCircle(p.x,p.y-35*density,20*density,paint);paint.style=Paint.Style.STROKE;paint.strokeWidth=2*density;paint.color=Color.WHITE;c.drawCircle(p.x,p.y-35*density,20*density,paint);paint.style=Paint.Style.FILL}
     }
     private fun corners(r:RectF)=listOf(PointF(r.left,r.top),PointF(r.right,r.top),PointF(r.right,r.bottom),PointF(r.left,r.bottom))
     fun cycleNode(delta:Int){
@@ -175,7 +192,7 @@ internal class VectorCanvas(private val activity:MainActivity,val document:Vecto
         val obj=document.layers.asReversed().filter{it.effectiveVisible && it.opacity>0}.flatMap{it.objects.asReversed()}.firstOrNull{it.containsInterior(point)}
         if(obj==null){activity.message("Drop inside a closed path. Use Nodes → Close path for freehand lines.");return false}
         if(document.owner(obj.id)?.effectiveLocked==true){activity.message("This layer is locked");return false}
-        edit{obj.fill=color};return true
+        edit{obj.fill=color};RecentColors(activity).record(color);return true
     }
     private fun begin(point:PointF){
         if(tool=="Nodes"){if(joiningPaths)joinAt(point)else if(addingAnchor)addAnchor(point)else beginNodes(point);return}
@@ -236,7 +253,7 @@ internal class VectorCanvas(private val activity:MainActivity,val document:Vecto
         if(previous!=null){
             if(mode in listOf("node","handle") && !nodeMoved){document.restore(previous);before=null;draft=null;pointer=-1;mode="";invalidate();onSelection();return}
             draft?.let{if(it.kind=="Pen"){val reduced=VectorGeometry.simplify(it.points,1.2f*density/zoom);it.points.clear();it.points.addAll(reduced);it.toBezier()};document.layers[document.active].objects.add(it);selectedId=null}
-            runCatching{document.commit(previous)}.onFailure{document.restore(previous);selectedId=null;activity.message(it.message?:"Could not add object")}
+            runCatching{document.commit(previous)}.onSuccess{draft?.let{obj->RecentColors(activity).record(obj.stroke);obj.fill?.let{RecentColors(activity).record(it)}}}.onFailure{document.restore(previous);selectedId=null;activity.message(it.message?:"Could not add object")}
             onChanged()
         }
         before=null;draft=null;pointer=-1;mode="";invalidate();onSelection()
@@ -251,9 +268,13 @@ internal class VectorCanvas(private val activity:MainActivity,val document:Vecto
         if(e.getToolType(0)==MotionEvent.TOOL_TYPE_ERASER){if(e.actionMasked==MotionEvent.ACTION_DOWN){cancelGesture();activity.message("Use Select → Object → Delete to remove a vector object")};return true}
         if(!e.x.isFinite() || !e.y.isFinite()){cancelGesture();return true}
         when(e.actionMasked){
-            MotionEvent.ACTION_DOWN->{if(onDismissPanel())return true;activity.deferAutosave();pointer=e.getPointerId(0);pen=hasPen;mode="";if(hasPen || !activity.penOnlyInput || tool in listOf("Nodes","Select"))begin(pagePoint(e.x,e.y))}
-            MotionEvent.ACTION_POINTER_DOWN->{if(pen && pointer>=0)return true;cancelGesture();multi=true;atlasGestureStartZoom=zoom;gestureCenter=PointF((e.getX(0)+e.getX(1))/2,(e.getY(0)+e.getY(1))/2);gestureDistance=hypot(e.getX(1)-e.getX(0),e.getY(1)-e.getY(0));gestureAngle=atan2(e.getY(1)-e.getY(0),e.getX(1)-e.getX(0))}
+            MotionEvent.ACTION_DOWN->{val dismissed=onDismissPanel();activity.deferAutosave();pointer=e.getPointerId(0);pen=hasPen;mode="";multi=false;holdOrigin=PointF(e.x,e.y)
+                removeCallbacks(holdColor);if(tool=="Pen" && activity.getSharedPreferences("studio",0).getBoolean("holdEyedropper",true))postDelayed(holdColor,450)
+                if(!dismissed && (hasPen || !activity.penOnlyInput || tool in listOf("Nodes","Select")))begin(pagePoint(e.x,e.y))}
+            MotionEvent.ACTION_POINTER_DOWN->{removeCallbacks(holdColor);pickingColor=false;pickTouch=null;if(pen && pointer>=0)return true;cancelGesture();multi=true;atlasGestureStartZoom=zoom;gestureCenter=PointF((e.getX(0)+e.getX(1))/2,(e.getY(0)+e.getY(1))/2);gestureDistance=hypot(e.getX(1)-e.getX(0),e.getY(1)-e.getY(0));gestureAngle=atan2(e.getY(1)-e.getY(0),e.getX(1)-e.getX(0))}
             MotionEvent.ACTION_MOVE->{
+                if(pickingColor){pickAt(e.x,e.y);return true}
+                if(hypot(e.x-holdOrigin.x,e.y-holdOrigin.y)>(if(pen)6 else 12)*density)removeCallbacks(holdColor)
                 if(multi && e.pointerCount>=2){val mid=PointF((e.getX(0)+e.getX(1))/2,(e.getY(0)+e.getY(1))/2);val distance=hypot(e.getX(1)-e.getX(0),e.getY(1)-e.getY(0));val page=pagePoint(gestureCenter.x,gestureCenter.y)
                     val angle=atan2(e.getY(1)-e.getY(0),e.getX(1)-e.getX(0));var delta=angle-gestureAngle
                     while(delta>Math.PI)delta-=(2*Math.PI).toFloat();while(delta< -Math.PI)delta+=(2*Math.PI).toFloat();rotation+=delta*180f/Math.PI.toFloat();gestureAngle=angle
@@ -261,10 +282,10 @@ internal class VectorCanvas(private val activity:MainActivity,val document:Vecto
                 val index=e.findPointerIndex(pointer);if(index>=0 && !multi){if(draft?.kind=="Pen")for(h in 0 until e.historySize)move(pagePoint(e.getHistoricalX(index,h),e.getHistoricalY(index,h)),e.getHistoricalEventTime(h));move(pagePoint(e.getX(index),e.getY(index)),e.eventTime)}
             }
             MotionEvent.ACTION_POINTER_UP->{if(pen && e.getPointerId(e.actionIndex)==pointer){move(pagePoint(e.getX(e.actionIndex),e.getY(e.actionIndex)),e.eventTime,release=true);finish()}}
-            MotionEvent.ACTION_UP->{if(multi && activity.atlas==null && zoom<fitScale*.48f){multi=false;pointer=-1;onAtlas();return true};if(multi){when(tappedFingers){2->if(activity.twoFingerUndo)undo();3->if(activity.threeFingerRedo)redo()}};if(!multi && tappedFingers==0 && pointer>=0){move(pagePoint(e.x,e.y),e.eventTime,release=true);finish()};multi=false;pointer=-1;performClick()}
+            MotionEvent.ACTION_UP->{removeCallbacks(holdColor);if(pickingColor){pickingColor=false;pickTouch=null;pointer=-1;invalidate();performClick();return true};if(multi && activity.atlas==null && zoom<fitScale*.48f){multi=false;pointer=-1;onAtlas();return true};if(multi){when(tappedFingers){2->if(activity.twoFingerUndo)undo();3->if(activity.threeFingerRedo)redo()}};if(!multi && tappedFingers==0 && pointer>=0){move(pagePoint(e.x,e.y),e.eventTime,release=true);finish()};multi=false;pointer=-1;performClick()}
             MotionEvent.ACTION_CANCEL->{cancelGesture();activity.scheduleSave()}
         };return true
     }
-    override fun onDetachedFromWindow(){atlasAnimator?.cancel();atlasAnimator=null;super.onDetachedFromWindow()}
+    override fun onDetachedFromWindow(){removeCallbacks(holdColor);pickBitmap?.recycle();pickBitmap=null;atlasAnimator?.cancel();atlasAnimator=null;super.onDetachedFromWindow()}
     override fun performClick():Boolean{super.performClick();return true}
 }

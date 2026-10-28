@@ -98,7 +98,7 @@ fn dab_spacing(brush: Brush) -> f32 {
 
 #[derive(Clone,Copy)]
 struct RecordedStamp {direction:[f32;2],sample:Sample,brush:Brush,distance:f32}
-struct Stroke {direction:[f32;2], effects:brush_color::BrushColor, mask_before:Option<Arc<Vec<u8>>>, rect: [usize; 4], before: Vec<u32>, layer: usize, last: Sample, filtered: Sample, brush: Brush, seed: u32, smudge: Option<Vec<u32>>, pending: Vec<gpu::Dab>, gpu_paint: bool, distance_to_dab: f32, distance:f32, stamp_distance:f32,records:Vec<RecordedStamp>, replay_end:Option<f32>, input_time:Option<f32>, input_position:(f32,f32), speed:f32, moving:bool }
+struct Stroke {loaded_paint:Option<u32>,mix_distance:f32,direction:[f32;2], effects:brush_color::BrushColor, mask_before:Option<Arc<Vec<u8>>>, rect: [usize; 4], before: Vec<u32>, layer: usize, last: Sample, filtered: Sample, brush: Brush, seed: u32, smudge: Option<Vec<u32>>, pending: Vec<gpu::Dab>, gpu_paint: bool, distance_to_dab: f32, distance:f32, stamp_distance:f32,records:Vec<RecordedStamp>, replay_end:Option<f32>, input_time:Option<f32>, input_position:(f32,f32), speed:f32, moving:bool }
 
 pub struct Engine {
     gpu: Option<gpu::Gpu>,
@@ -314,7 +314,7 @@ impl Engine {
         brush=Self::normalize_brush(brush);
         let mask_before=if self.mask_edit {self.state.layers[self.state.active].mask.clone()}else{None};
         if mask_before.is_some() && (brush.kind==6 || brush.kind>=128){return;}
-        let mut stroke = Stroke {direction:[1.0,0.0],effects:self.brush_color.clone(),mask_before:mask_before.clone(), rect: [self.width,self.height,0,0], before: if mask_before.is_some(){Vec::new()}else{self.state.layers[self.state.active].pixels.as_ref().clone()},
+        let mut stroke = Stroke {loaded_paint:None,mix_distance:0.0,direction:[1.0,0.0],effects:self.brush_color.clone(),mask_before:mask_before.clone(), rect: [self.width,self.height,0,0], before: if mask_before.is_some(){Vec::new()}else{self.state.layers[self.state.active].pixels.as_ref().clone()},
             layer: self.state.active, last: p, filtered: p, brush, seed: 0x736561, smudge: None, pending: Vec::new(), gpu_paint: brush.size>=32.0 && mask_before.is_none() && self.brush_color.mix==0.0, distance_to_dab: dab_spacing(brush), distance:0.0,stamp_distance:0.0,records:vec![],replay_end:None,input_time:None,input_position:(p.x,p.y),speed:0.0,moving:false };
         if stroke.gpu_paint { if let Some(gpu)=&mut self.gpu { gpu.selection(self.selection.as_deref(),self.selection_alpha.as_deref()); } }
         if brush.fade_length==0.0{self.stamp(p, &mut stroke);}
@@ -402,8 +402,14 @@ impl Engine {
         if brush.kind<64 && brush.kind!=5 && brush.kind!=6 && !self.mask_edit{
             brush.color=stroke.effects.color(brush.color,stroke.stamp_distance);
             if stroke.effects.mix>0.0{
-                let px=p.x.clamp(0.,(self.width-1)as f32)as usize;let py=p.y.clamp(0.,(self.height-1)as f32)as usize;
-                brush.color=brush_color::wet_mix(brush.color,self.state.layers[stroke.layer].pixels[py*self.width+px],stroke.effects.mix);
+                if stroke.effects.pickup>0.0 || stroke.effects.wetness>0.0{
+                    let under=brush_color::sample_paint(&stroke.before,self.width,self.height,p.x,p.y,brush.size*0.18);
+                    let step=(stroke.stamp_distance-stroke.mix_distance).max(0.0)/(brush.size*0.5).max(1.0);stroke.mix_distance=stroke.stamp_distance;
+                    brush.color=brush_color::transport(brush.color,&mut stroke.loaded_paint,under,stroke.effects.mix,stroke.effects.pickup,stroke.effects.wetness,step);
+                }else{
+                    let px=p.x.clamp(0.,(self.width-1)as f32)as usize;let py=p.y.clamp(0.,(self.height-1)as f32)as usize;
+                    brush.color=brush_color::wet_mix(brush.color,self.state.layers[stroke.layer].pixels[py*self.width+px],stroke.effects.mix);
+                }
             }
         }
         if brush.fade_length>0.0 {
@@ -498,12 +504,16 @@ impl Engine {
             };
             let texture=if strands && stroke.effects.layout==2{let lateral=(-stroke.direction[1]*dx+stroke.direction[0]*dy)/radius;texture*(0.52+0.48*(lateral*37.0).sin().abs())}else{texture};
             let color=if strands{let lateral=(-stroke.direction[1]*dx+stroke.direction[0]*dy)/radius;stroke.effects.at(stroke.brush.color,stroke.stamp_distance,lateral)}else{color};
-            let color=if strands && stroke.effects.mix>0.0{brush_color::wet_mix(color,pixels.as_ref().map_or(0,|values|values[idx]),stroke.effects.mix)}else{color};
+            let color=if strands && stroke.effects.mix>0.0{
+                if stroke.effects.pickup>0.0 || stroke.effects.wetness>0.0{brush_color::wet_mix(color,stroke.loaded_paint.unwrap_or(color),stroke.effects.mix)}
+                else{brush_color::wet_mix(color,pixels.as_ref().map_or(0,|values|values[idx]),stroke.effects.mix)}
+            }else{color};
             let hardness=if (64..=78).contains(&brush.kind) && brush.color&255<255 {
                 let hard=(brush.color&255) as f32/255.0*0.95;
                 let t=((1.0-d)/(1.0-hard)).clamp(0.0,1.0);t*t*(3.0-2.0*t)
             }else{1.0};
-            let alpha = (strength * edge * texture * hardness * selection_alpha.as_ref().map_or(1.0,|a|a[idx] as f32/255.0)).clamp(0.0, 1.0);
+            let wet_edge=if brush.kind<64 && stroke.effects.mix>0.0{1.0-stroke.effects.wetness*0.45*d.clamp(0.0,1.0).powi(2)}else{1.0};
+            let alpha = (strength * edge * texture * wet_edge * hardness * selection_alpha.as_ref().map_or(1.0,|a|a[idx] as f32/255.0)).clamp(0.0, 1.0);
             if let Some(mask)=mask.as_mut(){
                 let target=if brush.kind==5 || (16..=31).contains(&brush.kind) || (64..=78).contains(&brush.kind){0.0}else{(channel(color,16)*0.2126+channel(color,8)*0.7152+channel(color,0)*0.0722)*255.0};
                 mask[idx]=(mask[idx] as f32*(1.0-alpha)+target*alpha+0.5) as u8;continue;
@@ -594,7 +604,7 @@ impl Engine {
             if s.distance>0.01 && s.records.iter().any(|r|r.brush.fade_length>0.0) {
                 if let Some(mask)=&s.mask_before{self.state.layers[s.layer].mask=Some(mask.clone());}
                 else{self.state.layers[s.layer].pixels=Arc::new(s.before.clone());}
-                s.replay_end=Some(s.distance);s.seed=0x736561;s.smudge=None;
+                s.replay_end=Some(s.distance);s.seed=0x736561;s.smudge=None;s.loaded_paint=None;s.mix_distance=0.0;
                 let records=std::mem::take(&mut s.records);
                 for record in records {
                     if s.brush.kind!=record.brush.kind{self.flush_stroke(&mut s);s.smudge=None;}

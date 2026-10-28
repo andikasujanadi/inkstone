@@ -798,3 +798,33 @@ fn multicolor_cycle_length_controls_distance_and_bristle_layout_survives_fade_re
     let mut e=Engine::new(160,100).unwrap();e.command(&json!({"op":"brushEffects","mode":"Rainbow","layout":"Bristles","cycle":600})).unwrap();
     e.begin(Sample{x:15.,y:30.,pressure:1.,tilt:0.},Brush{size:30.,pressure_size:0.,stabilization:0.,fade_length:40.,..Brush::default()});e.sample(Sample{x:80.,y:30.,pressure:1.,tilt:0.});e.sample(Sample{x:130.,y:70.,pressure:1.,tilt:0.});e.end();assert!(e.state.layers[0].pixels.iter().any(|c|*c>>24>0));assert_eq!(e.undo.len(),1);
 }
+
+#[test]
+fn wet_paint_load_has_independent_pickup_retention_and_strength(){
+    let base=0xffffff00;let blue=0xff0000ff;let mut no_pickup=None;
+    for _ in 0..20{assert_eq!(brush_color::transport(base,&mut no_pickup,blue,1.0,0.0,1.0,0.1),base);}
+    let mut wet=None;for _ in 0..30{brush_color::transport(base,&mut wet,blue,1.0,0.8,1.0,0.1);}
+    let wet_color=brush_color::transport(base,&mut wet,0,1.0,0.8,1.0,0.1);
+    let mut dry=wet;for _ in 0..20{brush_color::transport(base,&mut dry,0,1.0,0.8,0.0,0.2);}
+    let dry_color=brush_color::transport(base,&mut dry,0,1.0,0.8,0.0,0.2);
+    assert!(channel(wet_color,0)>0.8);assert!(channel(dry_color,16)>0.9 && channel(dry_color,8)>0.9);
+    assert_eq!(brush_color::transport(base,&mut wet,blue,0.0,1.0,1.0,0.1),base);
+    assert_eq!(brush_color::sample_paint(&[0,0,0,0],2,2,0.5,0.5,0.3),0);
+}
+
+#[test]
+fn wet_paint_carries_color_into_empty_pixels_and_undo_redo_is_exact(){
+    fn draw(wetness:f64,fade:f32)->Engine{
+        let mut e=Engine::new(160,48).unwrap();
+        let pixels=Arc::make_mut(&mut e.state.layers[0].pixels);
+        for y in 0..48{for x in 0..65{pixels[y*160+x]=0xff0000ff;}}
+        e.command(&json!({"op":"brushEffects","mix":1.0,"pickup":0.85,"wetness":wetness})).unwrap();
+        let brush=Brush{color:0xffffff00,size:18.,flow:0.4,stabilization:0.,fade_length:fade,..Brush::default()};
+        e.begin(Sample{x:10.,y:24.,pressure:1.,tilt:0.},brush);
+        for x in 11..145{e.sample(Sample{x:x as f32,y:24.,pressure:1.,tilt:0.});}e.end();e
+    }
+    let wet=draw(1.0,0.0);let dry=draw(0.0,0.0);
+    assert!(channel(wet.color_at(115,24,false),0)>channel(dry.color_at(115,24,false),0)+0.3);
+    let mut fade=draw(0.7,25.0);let painted=fade.save().unwrap();assert!(fade.undo());assert!(fade.redo());assert_eq!(fade.save().unwrap(),painted);
+    let a=brush_color::BrushColor::parse(&json!({"mix":1.0,"pickup":8.0,"wetness":-3.0})).unwrap();assert_eq!(a.pickup,1.0);assert_eq!(a.wetness,0.0);
+}

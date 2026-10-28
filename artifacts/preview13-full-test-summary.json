@@ -1,0 +1,40 @@
+{
+  "version": "0.1.9-preview13",
+  "version_code": 31,
+  "published": false,
+  "android_unit_tests": {
+    "tests": 119,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "rust_unit_tests": {
+    "passed": 77,
+    "failed": 0
+  },
+  "desktop_metal_gpu_tests": {
+    "passed": 12,
+    "failed": 0
+  },
+  "lint": {
+    "Error": 0,
+    "Fatal": 0,
+    "Warning": 123
+  },
+  "apk_bytes": 10458277,
+  "apk_sha256": "14cb8404d17a56869c8676dcfeced191fe86193f8ede6c4f8c56eaa52a6799d5",
+  "signature_v2_verified": true,
+  "certificate_sha256": "23bd46ca626fc975136cf1b2b2772a3d56df2e3a7ddd28899a660880f498e5d3",
+  "native_matches_source_build": {
+    "arm64-v8a": true,
+    "x86_64": true
+  },
+  "license_assets_match_source": {
+    "inkstone-legacy-MIT-through-v0.1.8.txt": true,
+    "ADDITIONAL_PERMISSIONS.md": true,
+    "inkstone-LICENSING.md": true,
+    "vectorcraft-MIT.txt": true,
+    "inkstone-LICENSE.txt": true
+  },
+  "device_tested": false
+}

@@ -1,4 +1,24 @@
-# Verification — 27 October 2026
+# Verification — 28 October 2026
+
+## 0.20 release candidate
+
+- 122 Android framework/JNI tests and 77 Rust tests passed locally. Build/lint passed with 0 errors and 125 warnings. Raster mixing, brush library and Brush Studio screenshots inspected; Android hardware remains untested.
+- Package `art.inkstone.preview`, version `0.20`, code 33, same v2 signer; both ABIs match source-built outputs, fourteen JNI methods, 16 KB ELF alignment and matching license assets. APK: 10,458,265 bytes; SHA-256 `bf4f6896cb80da3d6afe393320696e295f470c2d4f830c41bca97d608b6bb657`.
+- [Release instructions](RELEASE_0_20.md); [package evidence](../artifacts/release-0.20-verification.json). GitHub publication is verified separately.
+
+## Unpublished local 0.1.9-preview14
+
+- 122 Android framework/JNI tests and 77 Rust tests passed. Covers independent Paint Mixing controls, editor-owned brush workflows, inactive Atlas eyedropper without document switching, and layer settlement from release coordinates in both directions.
+- Build/lint passed: 0 errors, 125 warnings. Mixing, brush management and Brush Studio screenshots inspected; physical Android behavior remains untested.
+- Package `art.inkstone.preview`, code 32, same v2 signer; both ABIs match source-built outputs, fourteen JNI methods, 16 KB ELF alignment and matching license assets. APK: 10,987,919 bytes; SHA-256 `1722011b2e4d4bfcca4ddefdc601aad606e958121c1032fd67c3845dc9315a5f`.
+- Local only. [Instructions and limits](LOCAL_PREVIEW_019_14.md). Atlas samples saved previews, not full-resolution inactive engines.
+
+## Unpublished local 0.1.9-preview13
+
+- 119 Android tests, 77 Rust tests and 12 desktop Metal GPU checks passed. New checks cover pen-only direct eyedropper, normal-weight pen-hover Gallery, 170% font layout, recent ink persistence/cancellation and paint-load controls, carry behavior and exact Undo/Redo.
+- Android build/lint passed: zero errors, 123 warnings. Large-font Raster/Vector screenshots inspected; Android hardware remains untested.
+- Package `art.inkstone.preview`, code 31; same v2 signer, both ABIs, fourteen JNI methods, 16 KB alignment. Packaged native binaries match source-built outputs; license assets match source. APK: 10,458,277 bytes; SHA-256 `14cb8404d17a56869c8676dcfeced191fe86193f8ede6c4f8c56eaa52a6799d5`.
+- Local only. [Instructions and limits](LOCAL_PREVIEW_019_13.md).
 
 ## 0.1.9-preview12 release checks
 

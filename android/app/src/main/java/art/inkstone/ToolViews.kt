@@ -60,7 +60,7 @@ class ToolIcon(context: Context, var symbol: String, private val action: () -> U
     }
     private val undo=shape {moveTo(-8f,-2f);cubicTo(8f,-7f,13f,6f,3f,8f);lineTo(-1f,8f);moveTo(-4f,-7f);lineTo(-9f,-2f);lineTo(-4f,2f)}
     private val dashes=DashPathEffect(floatArrayOf(2.2f,2.2f),0f)
-    init {isClickable=true;isFocusable=true;contentDescription=symbol;tooltipText=when(symbol){"Paint"->"Brush / Pen";"Erase"->"Eraser · tap again for hardness";"Select"->"Selection";"Transform"->"Move / resize";"Color"->"Colors · drag to fill";"Nodes"->"Edit vector points";else->symbol};setOnClickListener{action()}}
+    init {isClickable=true;isFocusable=true;contentDescription=symbol;tooltipText=when(symbol){"Paint Mixing"->"Paint Mixing · color pickup and wetness";"Paint"->"Brush / Pen";"Erase"->"Eraser · tap again for hardness";"Select"->"Selection";"Transform"->"Move / resize";"Color"->"Colors · drag to fill";"Nodes"->"Edit vector points";else->symbol};setOnClickListener{action()}}
     override fun onDraw(c:Canvas) {
         val s=min(width,height)/48f
         c.save();c.translate(width/2f,height/2f);c.scale(s,s)
@@ -75,6 +75,7 @@ class ToolIcon(context: Context, var symbol: String, private val action: () -> U
             "Rectangle"->{p.style=Paint.Style.STROKE;p.strokeWidth=2f;c.drawRect(-10f,-8f,10f,8f,p)}
             "Ellipse"->{p.style=Paint.Style.STROKE;p.strokeWidth=2f;c.drawOval(-10f,-8f,10f,8f,p)}
             "Nodes"->{p.style=Paint.Style.STROKE;c.drawPath(Path().apply{moveTo(-10f,8f);quadTo(-4f,-13f,10f,-6f)},p);p.style=Paint.Style.FILL;for(point in listOf(PointF(-10f,8f),PointF(-4f,-4f),PointF(10f,-6f)))c.drawRect(point.x-2,point.y-2,point.x+2,point.y+2,p)}
+            "Paint Mixing"->{p.style=Paint.Style.STROKE;p.strokeWidth=2f;c.drawOval(-12f,-10f,12f,11f,p);c.drawArc(-6f,-5f,7f,8f,25f,285f,false,p);p.style=Paint.Style.FILL;c.drawCircle(-6f,-5f,2f,p);c.drawCircle(2f,-7f,2f,p);c.drawCircle(8f,-2f,2f,p)}
             "Paint"->c.drawPath(brush,p)
             "Smudge"->c.drawPath(hand,p)
             "Erase"->c.drawPath(eraser,p)

@@ -282,18 +282,19 @@ class MainActivity : Activity() {
             b.pressureOpacity=prefs.getFloat("${key}_pressureOpacity",b.preset.pressureOpacity)
             b.fadeLength=prefs.getFloat("${key}_fadeLength",b.preset.fadeLength)
             b.kind=prefs.getInt("${key}_kind",b.preset.kind).coerceIn(0,14);b.colorLayout=prefs.getString("${key}_layout",b.preset.colorLayout)?:"Along"
-            b.colorMode=prefs.getString("${key}_colorMode",b.preset.colorMode)?:"Solid";b.colorCycle=prefs.getFloat("${key}_cycle",b.preset.colorCycle);b.wetMix=prefs.getFloat("${key}_mix",b.preset.wetMix);b.palette=runCatching{val a=org.json.JSONArray(prefs.getString("${key}_palette",org.json.JSONArray(b.preset.palette).toString()));(0 until a.length().coerceAtMost(12)).map{a.getLong(it).toInt()}}.getOrDefault(b.preset.palette)
+            b.colorMode=prefs.getString("${key}_colorMode",b.preset.colorMode)?:"Solid";b.colorCycle=prefs.getFloat("${key}_cycle",b.preset.colorCycle);b.wetMix=prefs.getFloat("${key}_mix",b.preset.wetMix);b.wetPickup=prefs.getFloat("${key}_pickup",b.preset.wetPickup).coerceIn(0f,1f);b.wetness=prefs.getFloat("${key}_wetness",b.preset.wetness).coerceIn(0f,1f);b.palette=runCatching{val a=org.json.JSONArray(prefs.getString("${key}_palette",org.json.JSONArray(b.preset.palette).toString()));(0 until a.length().coerceAtMost(12)).map{a.getLong(it).toInt()}}.getOrDefault(b.preset.palette)
         }
         restoreBrush(s.paintBrush, "paint_brush")
         restoreBrush(s.smudgeBrush, "smudge_brush")
         restoreBrush(s.eraseBrush, "erase_brush")
+        s.paintMixingEnabled=prefs.getBoolean("paintMixingEnabled",s.paintBrush.wetMix>0f)
     }
     fun savePreferences() {
         val s = session ?: return
-        val edit=prefs.edit()
+        val edit=prefs.edit().putBoolean("paintMixingEnabled",s.paintMixingEnabled)
         for((key,b) in listOf("paint_brush" to s.paintBrush,"smudge_brush" to s.smudgeBrush,"erase_brush" to s.eraseBrush)){
             edit.putInt("${key}_kind",b.kind).putString("${key}_layout",b.colorLayout)
-            edit.putString("${key}_palette",org.json.JSONArray(b.palette).toString()).putString("${key}_colorMode",b.colorMode).putFloat("${key}_cycle",b.colorCycle).putFloat("${key}_mix",b.wetMix)
+            edit.putString("${key}_palette",org.json.JSONArray(b.palette).toString()).putString("${key}_colorMode",b.colorMode).putFloat("${key}_cycle",b.colorCycle).putFloat("${key}_mix",b.wetMix).putFloat("${key}_pickup",b.wetPickup).putFloat("${key}_wetness",b.wetness)
             edit.putFloat("${key}_flow",b.flow).putFloat("${key}_pressureSize",b.pressureSize).putFloat("${key}_pressureOpacity",b.pressureOpacity).putFloat("${key}_fadeLength",b.fadeLength)
         }
         edit.putString("symmetryMode",s.symmetryMode).putFloat("eraserHardness",s.eraserHardness).putBoolean("penOnly",s.penOnly).putBoolean("protectControls",s.protectControls).putFloat("stabilization",s.stabilization).putString("rendererMode",s.rendererMode).putBoolean("pressureEnabled",s.pressureEnabled).putBoolean("canvasLocked",s.canvasLocked).putBoolean("quickShape",s.quickShape).putString("cursorStyle",s.cursorStyle).putFloat("cursorOpacity",s.cursorOpacity)

@@ -190,4 +190,21 @@ class AdvancedEditingTest{
         done(c)
     }
 
+    @Test fun draggedRowSettlesFromReleaseCoordinatesInBothDirections(){
+        val controller=Robolectric.buildActivity(MainActivity::class.java).setup();val a=controller.get();val owner=Any()
+        val body=LinearLayout(a).apply{orientation=LinearLayout.VERTICAL;tag="layer-list"};val first=View(a).apply{tag="layer-1"};val second=View(a).apply{tag="layer-2"}
+        body.addView(first,LinearLayout.LayoutParams(300,80));body.addView(second,LinearLayout.LayoutParams(300,80));a.setContentView(body);layout(body,"release14-before")
+        LayerDrag.target(second,owner){_,_,_->}
+        fun event(action:Int,y:Float){val method=DragEvent::class.java.declaredMethods.first{it.name=="obtain" && it.parameterTypes.size>1};method.isAccessible=true;var f=0;val args=method.parameterTypes.map{type->when(type){Integer.TYPE->action;java.lang.Float.TYPE->if(f++==0)220f else y;java.lang.Boolean.TYPE->false;Any::class.java->LayerDrag.Token(owner,1,80,300);else->null}}.toTypedArray();second.dispatchDragEvent(method.invoke(null,*args) as DragEvent)}
+        for(y in listOf(70f,5f)){
+            val at=IntArray(2);second.getLocationOnScreen(at);val releaseX=at[0]+220f-150f;val releaseY=at[1]+y-40f
+            event(DragEvent.ACTION_DRAG_STARTED,y);event(DragEvent.ACTION_DROP,y)
+            val motion=LayerDrag.capture(body,owner);body.removeView(first);body.addView(first,if(y>40)1 else 0);body.measure(View.MeasureSpec.makeMeasureSpec(1280,View.MeasureSpec.EXACTLY),View.MeasureSpec.makeMeasureSpec(800,View.MeasureSpec.EXACTLY));body.layout(0,0,1280,800);motion.settle(body);body.viewTreeObserver.dispatchOnPreDraw()
+            first.getLocationOnScreen(at);assertEquals(releaseX,at[0].toFloat(),1f);assertEquals(releaseY,at[1].toFloat(),1f)
+            shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(600));assertEquals(0f,first.translationY,.01f);assertEquals(0f,first.translationX,.01f)
+            event(DragEvent.ACTION_DRAG_ENDED,y)
+        }
+        val session=a.session;controller.pause().stop().destroy();until{session==null || session.fullyClosed};until{a.io.isTerminated}
+    }
+
 }

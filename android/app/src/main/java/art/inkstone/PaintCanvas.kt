@@ -125,10 +125,11 @@ class PaintCanvas(context: Context, val session: DrawingSession) : View(context)
         if(shapePoints.size>4096){val reduced=shapePoints.filterIndexed{i,_->i%2==0};shapePoints.clear();shapePoints.addAll(reduced)}
         if(hypot(x-holdX,y-holdY)>3*dp){holdX=x;holdY=y;removeCallbacks(shapeHold);postDelayed(shapeHold,650)}
     }
+    private var holdCanPick=false
     private val longPress = Runnable {
-        if (session.holdEyedropper && !multi && !pen && !moved && activePointer >= 0 && session.tool == "Paint") {
+        if (session.holdEyedropper && holdCanPick && !multi && !moved && activePointer >= 0 && session.tool == "Paint") {
             if(quickShapeEdit.active)return@Runnable
-            session.stroke(3, floatArrayOf()); drawing = false; picking = true
+            removeCallbacks(shapeHold);if(drawing)session.stroke(3, floatArrayOf()); drawing = false; picking = true
             pick(downX, downY)
         }
     }
@@ -439,10 +440,13 @@ class PaintCanvas(context: Context, val session: DrawingSession) : View(context)
                 fitAnimator?.cancel(); fitAnimator = null
                 removeCallbacks(shapeHold);shapePoints.clear();snapped=false;shapeEligible=event.getToolType(0)!=MotionEvent.TOOL_TYPE_ERASER && !(stylusButtons.down && session.stylusButtonAction==StylusAction.ERASE);holdX=event.x;holdY=event.y
                 requestFocus()
-                if (onDismissPanel()) return true
+                val dismissed=onDismissPanel()
                 downTime = SystemClock.uptimeMillis(); downX = event.x; downY = event.y; moved = false; multi = false; maxPointers = 1
                 activePointer = event.getPointerId(0); pen = event.getToolType(0) in listOf(MotionEvent.TOOL_TYPE_STYLUS, MotionEvent.TOOL_TYPE_ERASER)
                 onInputDevice(event)
+                removeCallbacks(longPress);holdCanPick=event.getToolType(0)!=MotionEvent.TOOL_TYPE_ERASER && !stylusButtons.down
+                if(session.holdEyedropper && holdCanPick && session.tool=="Paint")postDelayed(longPress,450)
+                if(dismissed)return true
                 if (!pen && session.penOnly && session.tool in listOf("Paint", "Erase", "Smudge","Liquify")) return true
                 if(session.info.getJSONArray("layers").getJSONObject(session.info.getInt("active")).optBoolean("locked") && session.tool in listOf("Paint","Smudge","Erase","Fill","Transform")){onGesture("Layer is locked");return true}
                 if(pen && stylusButtons.down){
@@ -462,7 +466,7 @@ class PaintCanvas(context: Context, val session: DrawingSession) : View(context)
                         onStrokeStart()
                         session.stroke(0, strokeSamples(event, 0, false), erasing(event,0),strokeTimes(event,false))
                         recordShape(strokeSamples(event,0,false),event.x,event.y)
-                        postDelayed(longPress, 550)
+
                     }
                 }
             }
@@ -477,7 +481,7 @@ class PaintCanvas(context: Context, val session: DrawingSession) : View(context)
                 if (multi) { moveGesture(event); return true }
                 val index = event.findPointerIndex(activePointer); if (index < 0) return true
                 val x = event.getX(index); val y = event.getY(index)
-                if (hypot(x - downX, y - downY) > 5 * dp) { moved = true; removeCallbacks(longPress) }
+                if (hypot(x - downX, y - downY) > (if(pen)6 else 12) * dp) { moved = true; removeCallbacks(longPress) }
                 if(pen && stylusButtons.down && session.stylusButtonAction==StylusAction.EYEDROPPER && !picking){
                     if(drawing){session.stroke(3,floatArrayOf());drawing=false};picking=true
                 }
@@ -538,6 +542,6 @@ class PaintCanvas(context: Context, val session: DrawingSession) : View(context)
             }
         }; invalidate()
     }
-    override fun onDetachedFromWindow(){fitAnimator?.cancel();fitAnimator=null;selectionBitmap?.recycle();selectionBitmap=null;rasterTransform.dispose();super.onDetachedFromWindow()}
+    override fun onDetachedFromWindow(){removeCallbacks(longPress);removeCallbacks(shapeHold);fitAnimator?.cancel();fitAnimator=null;selectionBitmap?.recycle();selectionBitmap=null;rasterTransform.dispose();super.onDetachedFromWindow()}
     override fun performClick(): Boolean { super.performClick(); return true }
 }

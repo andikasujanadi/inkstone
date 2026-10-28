@@ -55,8 +55,10 @@ class EditorView(val activity: MainActivity, val session: DrawingSession) : Fram
     private var bottomGroup=""
     private var bottomContext=""
     private lateinit var historyControls: FrameLayout
-    private val galleryButton by lazy{text("Gallery",17f).apply{isClickable=true;isFocusable=true;background=selectable();setOnClickListener{activity.gallery()}}}
+    private val galleryButton by lazy{GalleryButton(activity){activity.gallery()}}
     private val saveButton by lazy{text("Save",13f).apply{gravity=Gravity.CENTER;setPadding(dp(6),0,dp(6),0);isSingleLine=true;isClickable=true;isFocusable=true;contentDescription="Save artwork";translationX=dp(71).toFloat();setOnClickListener{saveOptions()}}}
+    private val saveWidth get()=max(dp(54),ceil(saveButton.paint.measureText(saveButton.text.toString())).toInt()+saveButton.paddingLeft+saveButton.paddingRight)
+    private val historyWidth get()=max(dp(196),2*(dp(44)+saveWidth))
     private var penTouchActive=false
     private var blockedTouch=false
     private val notice = TextView(activity)
@@ -99,6 +101,7 @@ class EditorView(val activity: MainActivity, val session: DrawingSession) : Fram
         session.onToolChange={if(session.tool!="Liquify")canvas.liquify.finish();if(session.tool!="Guide")canvas.guides.editing=false;canvas.finishQuickShape();canvas.syncTransformTool()}
         session.beforeSnapshot={canvas.liquify.finish();canvas.finishQuickShape();canvas.rasterTransform.finish()}
         session.beforeCommand={op->if(!op.startsWith("liquify") && op !in listOf("info","pick","selectionPreview") && canvas.liquify.active){canvas.liquify.finish();session.tool="Paint"};if(op !in listOf("info","pick","selectionPreview")){canvas.finishQuickShape();if(op !in listOf("transformMatrix","transformProjective","transformMesh"))canvas.rasterTransform.finish()}}
+        session.onColorUsed={RecentColors(activity).record(it)}
         session.onFrame={canvas.onRenderedFrame()}
         session.onInfo={canvas.syncSelection();refreshTools()}
         session.onHistoryNotice=::showNotice
@@ -147,7 +150,7 @@ class EditorView(val activity: MainActivity, val session: DrawingSession) : Fram
         val right=LinearLayout(activity).apply{orientation=LinearLayout.HORIZONTAL;gravity=Gravity.RIGHT or Gravity.CENTER_VERTICAL}
         (galleryButton.parent as? android.view.ViewGroup)?.removeView(galleryButton)
         galleryButton.setTextColor(if(session.lightInterface)Color.BLACK else Color.WHITE)
-        left.addView(galleryButton,LinearLayout.LayoutParams(dp(84),dp(44)))
+        left.addView(galleryButton,LinearLayout.LayoutParams(galleryButton.requiredWidth,dp(44)))
         for(symbol in listOf("Actions","Adjustments","Select","Transform")){
             val control=icon(symbol){
                 when(symbol){
@@ -157,9 +160,10 @@ class EditorView(val activity: MainActivity, val session: DrawingSession) : Fram
                 }
             };icons[symbol]=control;left.addView(control)
         }
-        for(symbol in listOf("Paint","Smudge","Erase","Layers","Color")){
+        for(symbol in listOf("Paint","Paint Mixing","Smudge","Erase","Layers","Color")){
             val control=icon(symbol){
                 when(symbol){
+                    "Paint Mixing"->{session.tool="Paint";session.paintMixingEnabled=true;if(session.paintBrush.wetMix<=0f)session.paintBrush.wetMix=.65f;activity.savePreferences();refreshTools();paintMixing()}
                     "Layers"->{
                         if(panelKey=="Layers")dismissPanel()
                         else if(panel!=null && !panelIsLeft)session.thumbnails{rebuildPanel(::layers)}
@@ -171,7 +175,8 @@ class EditorView(val activity: MainActivity, val session: DrawingSession) : Fram
                         else colors()
                     }
                     else->{
-                        val switching=session.tool!=symbol
+                        val switching=session.tool!=symbol || (symbol=="Paint" && session.paintMixingEnabled)
+                        if(symbol=="Paint"){session.paintMixingEnabled=false;activity.savePreferences()}
                         if(switching){
                             if(session.tool in listOf("Paint","Smudge"))activity.lastDrawingTool=session.tool
                             session.tool=symbol
@@ -196,14 +201,15 @@ class EditorView(val activity: MainActivity, val session: DrawingSession) : Fram
         historyControls.addView(undoRedo,LayoutParams(dp(88),dp(44),Gravity.CENTER))
         (saveButton.parent as? android.view.ViewGroup)?.removeView(saveButton)
         saveButton.setTextColor(if(session.lightInterface)Color.BLACK else Color.WHITE)
-        historyControls.addView(saveButton,LayoutParams(dp(54),dp(44),Gravity.CENTER))
+        saveButton.translationX=dp(44)+saveWidth/2f
+        historyControls.addView(saveButton,LayoutParams(saveWidth,dp(44),Gravity.CENTER))
         if(narrow)addView(historyControls,LayoutParams(-1,dp(44),Gravity.BOTTOM))
-        else toolbar.addView(historyControls,LayoutParams(dp(196),dp(44),Gravity.CENTER))
+        else toolbar.addView(historyControls,LayoutParams(historyWidth,dp(44),Gravity.CENTER))
         addView(toolbar,LayoutParams(-1,dp(barHeight),Gravity.TOP))
     }
     override fun onMeasure(widthSpec:Int,heightSpec:Int){
         val w=MeasureSpec.getSize(widthSpec);val h=MeasureSpec.getSize(heightSpec)
-        val compact=w<h || w/density<700
+        val compact=w<h || w<max(dp(700),2*max(galleryButton.requiredWidth+dp(160),dp(288))+historyWidth+dp(24))
         if(compact!=narrow){
             narrow=compact;dismissPanel();removeView(toolbar);(historyControls.parent as? android.view.ViewGroup)?.removeView(historyControls);buildToolbar();refreshTools()
         }
@@ -277,7 +283,7 @@ class EditorView(val activity: MainActivity, val session: DrawingSession) : Fram
         if(!session.info.optBoolean("maskEditing")){colorBeforeMask?.let{session.color=it};colorBeforeMask=null}
         canvas.syncTransformTool()
         colorHeader?.setBackgroundColor(session.color)
-        for((symbol,view)in icons){view.activeTool=when(symbol){"Color"->panelKey=="Colors";"Layers"->panelKey=="Layers";"Actions"->panelKey=="Actions";"Adjustments"->panelKey=="Adjustments";else->session.tool==symbol};view.swatch=session.color;view.invalidate()}
+        for((symbol,view)in icons){view.activeTool=when(symbol){"Paint"->session.tool=="Paint" && !session.paintMixingEnabled;"Paint Mixing"->session.tool=="Paint" && session.paintMixingEnabled;"Color"->panelKey=="Colors";"Layers"->panelKey=="Layers";"Actions"->panelKey=="Actions";"Adjustments"->panelKey=="Adjustments";else->session.tool==symbol};view.swatch=session.color;view.invalidate()}
         if(::sizeSlider.isInitialized){sizeSlider.value=sqrt((if(session.tool=="Liquify")canvas.liquify.size else session.size)/600f);sizeSlider.contentDescription=if(session.tool=="Liquify")"Liquify size"else"Brush size"}
         if(::opacitySlider.isInitialized){opacitySlider.value=if(session.tool=="Liquify")canvas.liquify.strength else session.opacity;opacitySlider.contentDescription=if(session.tool=="Liquify")"Liquify strength"else"Brush opacity"}
         if(::bottom.isInitialized)updateBottom()
@@ -354,7 +360,8 @@ class EditorView(val activity: MainActivity, val session: DrawingSession) : Fram
         if(panelKey==key && !replacingPanel){dismissPanel();return};if(previous==null)dismissPanel();departingPanel?.let{it.animate().cancel();removeView(it)};departingPanel=null;panelKey=key;panelIsLeft=left
         val outer=LinearLayout(activity).apply{orientation=LinearLayout.VERTICAL;setPadding(dp(10),dp(8),dp(10),dp(12));elevation=dp(14).toFloat();isClickable=true}
         val heading=LinearLayout(activity).apply{orientation=LinearLayout.HORIZONTAL;gravity=Gravity.CENTER_VERTICAL;setPadding(dp(4),0,dp(4),0)}
-        heading.addView(text(title,25f).apply{typeface=Typeface.create("sans-serif-medium",Typeface.NORMAL)},LinearLayout.LayoutParams(0,dp(58),1f));extra(heading)
+        heading.minimumHeight=dp(58)
+        heading.addView(text(title,25f).apply{typeface=Typeface.create("sans-serif-medium",Typeface.NORMAL);maxLines=3;setPadding(dp(14),dp(8),dp(6),dp(8))},LinearLayout.LayoutParams(0,-2,1f));extra(heading)
         outer.addView(heading)
         val body=LinearLayout(activity).apply{orientation=LinearLayout.VERTICAL;setPadding(0,dp(6),0,dp(10))}
         content(body)
@@ -374,6 +381,7 @@ class EditorView(val activity: MainActivity, val session: DrawingSession) : Fram
         }
         if(previous!=null){
             previous.animate().cancel()
+            previous.alpha=1f;previous.scaleX=1f;previous.scaleY=1f;previous.translationY=0f
             previous.removeAllViews()
             while(outer.childCount>0){val child=outer.getChildAt(0);outer.removeView(child);previous.addView(child)}
             val lp=previous.layoutParams as? LayoutParams
@@ -419,7 +427,7 @@ class EditorView(val activity: MainActivity, val session: DrawingSession) : Fram
             panel("Eraser","Eraser",350,left=left){body->
                 body.addView(row("← Back to Studio"){brushStudio(left)})
                 body.addView(text("Soft edge ← Hard edge",16f),LinearLayout.LayoutParams(-1,dp(48)))
-                slider(body,"Hardness",session.eraserHardness){session.eraserHardness=it;activity.savePreferences()}
+                brushSlider(body,"Hardness",session.eraserHardness){session.eraserHardness=it;activity.savePreferences()}
                 body.addView(row("Soft"){session.eraserHardness=0f;activity.savePreferences();rebuildPanel{eraserSettings(left)}})
                 body.addView(row("Medium"){session.eraserHardness=.5f;activity.savePreferences();rebuildPanel{eraserSettings(left)}})
                 body.addView(row("Hard"){session.eraserHardness=1f;activity.savePreferences();rebuildPanel{eraserSettings(left)}})
@@ -490,14 +498,14 @@ class EditorView(val activity: MainActivity, val session: DrawingSession) : Fram
                 body.addView(text(session.preset.name,17f),LinearLayout.LayoutParams(-1,dp(42)))
                 body.addView(BrushPreview(activity,currentPreset(),eraser=session.tool=="Erase"),LinearLayout.LayoutParams(-1,dp(90)))
                 if(session.tool=="Erase")body.addView(row("Edge hardness"){eraserSettings(left)})
-                slider(body,"Flow",session.flow){session.flow=it.coerceAtLeast(.01f);activity.savePreferences()}
-                slider(body,"Stabilization",session.stabilization/.95f){session.stabilization=it*.95f;activity.savePreferences()}
-                preferenceSlider(body,"Fade tail length",session.fadeLength/2000f,{if(it==0f)"Off" else "${(it*2000).roundToInt()} px"}){session.fadeLength=it*2000f;activity.savePreferences()}
-                slider(body,"Pressure → Size",session.pressureSize){session.pressureSize=it;activity.savePreferences()}
-                slider(body,"Pressure → Opacity",session.pressureOpacity){session.pressureOpacity=it;activity.savePreferences()}
+                brushSlider(body,"Flow",session.flow){session.flow=it.coerceAtLeast(.01f);activity.savePreferences()}
+                brushSlider(body,"Stabilization",session.stabilization/.95f){session.stabilization=it*.95f;activity.savePreferences()}
+                brushSlider(body,"Fade tail length",session.fadeLength/2000f){session.fadeLength=it*2000f;activity.savePreferences()}
+                brushSlider(body,"Pressure → Size",session.pressureSize){session.pressureSize=it;activity.savePreferences()}
+                brushSlider(body,"Pressure → Opacity",session.pressureOpacity){session.pressureOpacity=it;activity.savePreferences()}
                 if(session.tool=="Paint"){
                     body.addView(row("Multicolor settings",session.currentBrush.colorMode){multicolorSettings(left)})
-                    slider(body,"Wet mix · experimental",session.currentBrush.wetMix){session.currentBrush.wetMix=it;activity.savePreferences()}
+
                 }
                 body.addView(row(if(session.preset.customId.isEmpty())"Save as new brush"else"Save brush changes"){saveLibraryBrush()})
                 body.addView(row("Library options"){brushOptions(session.preset)})
@@ -506,32 +514,64 @@ class EditorView(val activity: MainActivity, val session: DrawingSession) : Fram
             }
         }
     }
-    private fun currentPreset()=session.preset.copy(kind=session.currentBrush.kind,colorLayout=session.currentBrush.colorLayout,size=session.size,flow=session.flow,pressureSize=session.pressureSize,pressureOpacity=session.pressureOpacity,fadeLength=session.fadeLength,opacity=session.opacity,stabilization=session.stabilization,hardness=session.eraserHardness,colorMode=session.currentBrush.colorMode,colorCycle=session.currentBrush.colorCycle,wetMix=session.currentBrush.wetMix,palette=session.currentBrush.palette)
+    private fun currentPreset()=session.preset.copy(kind=session.currentBrush.kind,colorLayout=session.currentBrush.colorLayout,size=session.size,flow=session.flow,pressureSize=session.pressureSize,pressureOpacity=session.pressureOpacity,fadeLength=session.fadeLength,opacity=session.opacity,stabilization=session.stabilization,hardness=session.eraserHardness,colorMode=session.currentBrush.colorMode,colorCycle=session.currentBrush.colorCycle,wetMix=session.currentBrush.wetMix,wetPickup=session.currentBrush.wetPickup,wetness=session.currentBrush.wetness,palette=session.currentBrush.palette)
     private fun saveLibraryBrush(){
         val library=BrushLibrary(activity);val p=currentPreset()
-        if(p.customId.isEmpty())activity.textDialog("New brush name",p.name+" copy"){name->runCatching{library.copy(p,name)}.onSuccess{session.choose(it);activity.savePreferences();brushStudio()}.onFailure{showNotice(it.message?:"Cannot save brush")}}
+        if(p.customId.isEmpty())libraryName("New brush name",p.name+" copy"){name->runCatching{library.copy(p,name)}.onSuccess{session.choose(it);activity.savePreferences();brushStudio()}.onFailure{showNotice(it.message?:"Cannot save brush")}}
         else runCatching{library.save(p)}.onSuccess{session.choose(it);activity.savePreferences();showNotice("Brush saved");brushStudio()}.onFailure{showNotice(it.message?:"Cannot save brush")}
     }
-    private fun chooseBrushPalette(left:Boolean){val all=PaletteStore(activity).all
-        AlertDialog.Builder(activity).setTitle("Brush palette").setItems(all.map{it.name}.toTypedArray()){_,i->if(all[i].colors.size<2){showNotice("Add at least two colors to this palette first")}else{session.currentBrush.palette=all[i].colors.take(12);activity.savePreferences();brushStudio(left)}}.show()
+    private fun libraryMenu(title:String, items:List<Pair<String,()->Unit>>){
+        rebuildPanel{panel("Library options",title,510){body->
+            body.addView(row("← Back to Library"){rebuildPanel(::brushes)})
+            for((label,action) in items)body.addView(row(label){action()})
+        }}
     }
-    private fun addLibraryItem(){AlertDialog.Builder(activity).setTitle("Brush library").setItems(arrayOf("Brush Studio","New brush","Duplicate current brush","New category")){_,i->when(i){
-        0->brushStudio()
-        1,2->activity.textDialog("Brush name",if(i==1)"My Brush"else session.preset.name+" copy"){name->runCatching{BrushLibrary(activity).copy(if(i==1)BrushPreset("My Brush","My Brushes",0,16f)else currentPreset(),name,if(brushGroup in listOf("Recent","Imported"))"My Brushes"else brushGroup)}.onSuccess{session.choose(it);brushGroup=it.group;activity.savePreferences();brushStudio()}.onFailure{showNotice(it.message?:"Cannot create brush")}}
-        3->activity.textDialog("Category name",""){name->runCatching{BrushLibrary(activity).createCategory(name)}.onSuccess{brushGroup=name.trim().take(60);rebuildPanel(::brushes)}.onFailure{showNotice(it.message?:"Cannot create category")}}
-    }}.show()}
+    private fun libraryName(title:String,initial:String,save:(String)->Unit){
+        rebuildPanel{panel("Library name",title,330){body->
+            val field=android.widget.EditText(activity).apply{setText(initial);setTextColor(theme.text);setSingleLine(true);contentDescription=title;selectAll();setPadding(dp(14),dp(8),dp(14),dp(8));background=android.graphics.drawable.GradientDrawable().apply{setColor(theme.track);cornerRadius=dp(12).toFloat()}}
+            body.addView(field,LinearLayout.LayoutParams(-1,dp(54)))
+            body.addView(row("Save"){val name=field.text.toString().trim();if(name.isBlank())field.error="Enter a name" else runCatching{save(name)}.onFailure{field.error=it.message?:"Cannot save"}})
+            body.addView(row("Cancel"){rebuildPanel(::brushes)})
+        }}
+    }
+    private fun addLibraryItem(){libraryMenu("Brush library",listOf(
+        "Brush Studio" to {brushStudio()},
+        "Multicolor settings" to {multicolorSettings(false)},
+        "New brush" to {newLibraryBrush(true)},
+        "Duplicate current brush" to {newLibraryBrush(false)},
+        "New category" to {libraryName("Category name",""){name->BrushLibrary(activity).createCategory(name);brushGroup=name.take(60);rebuildPanel(::brushes)}}
+    ))}
+    private fun newLibraryBrush(fresh:Boolean){libraryName("Brush name",if(fresh)"My Brush"else session.preset.name+" copy"){name->
+        val p=BrushLibrary(activity).copy(if(fresh)BrushPreset("My Brush","My Brushes",0,16f)else currentPreset(),name,if(brushGroup in listOf("Recent","Imported"))"My Brushes"else brushGroup)
+        session.choose(p);brushGroup=p.group;activity.savePreferences();brushStudio()
+    }}
     private fun categoryOptions(group:String){val lib=BrushLibrary(activity);if(group !in lib.customCategories())return
-        AlertDialog.Builder(activity).setTitle(group).setItems(arrayOf("Rename category","Delete category")){_,i->if(i==0)activity.textDialog("Category name",group){name->runCatching{lib.renameCategory(group,name)}.onSuccess{brushGroup=name.trim().take(60);rebuildPanel(::brushes)}.onFailure{showNotice(it.message?:"Cannot rename category")}}
-            else AlertDialog.Builder(activity).setMessage("Move its brushes to My Brushes and delete this category?").setPositiveButton("Delete"){_,_->lib.deleteCategory(group);brushGroup="My Brushes";rebuildPanel(::brushes)}.setNegativeButton("Cancel",null).show()}.show()
+        libraryMenu(group,listOf(
+            "Rename category" to {libraryName("Category name",group){name->lib.renameCategory(group,name);brushGroup=name.take(60);rebuildPanel(::brushes)}},
+            "Delete category" to {libraryMenu("Move brushes to My Brushes?",listOf("Delete category" to {lib.deleteCategory(group);brushGroup="My Brushes";rebuildPanel(::brushes)}))}
+        ))
     }
-    private fun brushOptions(p:BrushPreset){val lib=BrushLibrary(activity);val custom=p.customId.isNotEmpty();val options=if(custom)arrayOf("Edit brush","Duplicate","Rename","Move to category","Delete")else arrayOf("Edit brush","Duplicate")
-        AlertDialog.Builder(activity).setTitle(p.name).setItems(options){_,i->when(i){
-            0->brushStudio()
-            1->activity.textDialog("Brush name",p.name+" copy"){name->runCatching{lib.copy(currentPreset(),name)}.onSuccess{session.choose(it);activity.savePreferences();brushStudio()}.onFailure{showNotice(it.message?:"Cannot duplicate brush")}}
-            2->activity.textDialog("Brush name",p.name){name->session.choose(lib.save(currentPreset().copy(name=name)));activity.savePreferences();rebuildPanel(::brushes)}
-            3->{val groups=lib.categories().filter{it!="Recent"};AlertDialog.Builder(activity).setTitle("Move brush").setItems(groups.toTypedArray()){_,n->session.choose(lib.save(currentPreset().copy(group=groups[n])));brushGroup=groups[n];activity.savePreferences();rebuildPanel(::brushes)}.show()}
-            4->AlertDialog.Builder(activity).setMessage("Delete ${p.name}?").setPositiveButton("Delete"){_,_->lib.delete(p.customId);session.choose(brushPresets[0]);activity.savePreferences();rebuildPanel(::brushes)}.setNegativeButton("Cancel",null).show()
-        }}.show()
+    private fun brushOptions(p:BrushPreset){val lib=BrushLibrary(activity)
+        val options=mutableListOf<Pair<String,()->Unit>>("Edit brush" to {brushStudio()},"Duplicate" to {libraryName("Brush name",p.name+" copy"){name->session.choose(lib.copy(currentPreset(),name));activity.savePreferences();brushStudio()}})
+        if(p.customId.isNotEmpty())options.addAll(listOf(
+            "Rename" to {libraryName("Brush name",p.name){name->session.choose(lib.save(currentPreset().copy(name=name)));activity.savePreferences();rebuildPanel(::brushes)}},
+            "Move to category" to {libraryMenu("Move brush",lib.categories().filter{it!="Recent"}.map{group->group to {session.choose(lib.save(currentPreset().copy(group=group)));brushGroup=group;activity.savePreferences();rebuildPanel(::brushes)}})},
+            "Delete" to {libraryMenu("Delete ${p.name}?",listOf("Delete brush" to {lib.delete(p.customId);session.choose(brushPresets[0]);activity.savePreferences();rebuildPanel(::brushes)}))}
+        ))
+        libraryMenu(p.name,options)
+    }
+    private fun paintMixing(){rebuildPanel{panel("Paint Mixing","Paint Mixing",570){body->
+        body.addView(text("Mix paint already on the active layer.",14f,theme.secondary))
+        toggle(body,"Mixing enabled",session.paintMixingEnabled){session.paintMixingEnabled=it;activity.savePreferences();refreshTools()}
+        brushSlider(body,"Mix strength",session.paintBrush.wetMix){session.paintBrush.wetMix=it;activity.savePreferences()}
+        brushSlider(body,"Color pickup",session.paintBrush.wetPickup){session.paintBrush.wetPickup=it;activity.savePreferences()}
+        brushSlider(body,"Wetness",session.paintBrush.wetness){session.paintBrush.wetness=it;activity.savePreferences()}
+        body.addView(row("Brush tip",session.preset.name){rebuildPanel(::brushes)})
+        body.addView(row("Done"){dismissPanel()})
+    }}}
+    private fun brushSlider(body:LinearLayout,label:String,value:Float,changed:(Float)->Unit){
+        val title=text("$label ${(value*100).roundToInt()}%",14f);body.addView(title,LinearLayout.LayoutParams(-1,-2).apply{topMargin=dp(12)})
+        body.addView(BrushRange(activity,value,theme.light){amount->title.text="$label ${(amount*100).roundToInt()}%";changed(amount)}.apply{contentDescription=label},LinearLayout.LayoutParams(-1,dp(44)))
     }
     private fun colors(){
         canvas.finishQuickShape()
@@ -540,6 +580,7 @@ class EditorView(val activity: MainActivity, val session: DrawingSession) : Fram
             for(tab in listOf("Disc","Classic","Harmony","Value","Palettes"))tabs.addView(text(tab,11f,if(tab==colorTab)blue else 0xffbbbbbb.toInt()).apply{setPadding(dp(5),0,dp(5),0);gravity=Gravity.CENTER;isFocusable=true;setOnClickListener{colorTab=tab;rebuildPanel(::colors)}},LinearLayout.LayoutParams(0,dp(48),1f))
             outer.addView(tabs)
         }){body->
+            body.addView(RecentColorRow(activity){session.color=it;activity.savePreferences();refreshTools();rebuildPanel(::colors)})
             if(colorTab in listOf("Disc","Classic","Harmony")){
                 body.addView(ColorDisc(activity,session.color,colorTab=="Classic"){session.color=it;refreshTools();activity.savePreferences()},LinearLayout.LayoutParams(-1,dp(282)))
                 if(colorTab=="Harmony"){

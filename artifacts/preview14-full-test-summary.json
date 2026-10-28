@@ -1,0 +1,37 @@
+{
+  "version": "0.1.9-preview14",
+  "version_code": 32,
+  "published": false,
+  "android_unit_tests": {
+    "tests": 122,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "rust_unit_tests": {
+    "passed": 77,
+    "failed": 0
+  },
+  "lint": {
+    "Error": 0,
+    "Fatal": 0,
+    "Warning": 125
+  },
+  "apk_bytes": 10987919,
+  "apk_sha256": "1722011b2e4d4bfcca4ddefdc601aad606e958121c1032fd67c3845dc9315a5f",
+  "signature_v2_verified": true,
+  "certificate_sha256": "23bd46ca626fc975136cf1b2b2772a3d56df2e3a7ddd28899a660880f498e5d3",
+  "native_matches_source_build": {
+    "arm64-v8a": true,
+    "x86_64": true
+  },
+  "license_assets_match_source": {
+    "licenses/inkstone-legacy-MIT-through-v0.1.8.txt": true,
+    "licenses/ADDITIONAL_PERMISSIONS.md": true,
+    "licenses/inkstone-LICENSING.md": true,
+    "licenses/vectorcraft-MIT.txt": true,
+    "licenses/inkstone-LICENSE.txt": true
+  },
+  "device_tested": false,
+  "atlas_sampling": "Saved artwork previews, up to 480px; inactive documents are not opened as live engines."
+}

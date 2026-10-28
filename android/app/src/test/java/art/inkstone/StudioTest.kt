@@ -416,11 +416,11 @@ class StudioTest {
     @Test fun stabilizerKeepsFullValueAcrossPanelsAndNewCanvases(){
         val controller=Robolectric.buildActivity(MainActivity::class.java).setup();val a=controller.get();val e=checkNotNull(a.editor);val s=checkNotNull(a.session)
         render(e,"feedback-before-settings");click(e,"Actions");click(e,"Prefs");click(e,"Pressure and Smoothing")
-        val seek=checkNotNull(named(e,"Stabilization")) as android.widget.SeekBar
+        val seek=checkNotNull(named(e,"Stabilization")) as BrushRange
         repeat(100){seek.onKeyDown(android.view.KeyEvent.KEYCODE_DPAD_RIGHT,android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN,android.view.KeyEvent.KEYCODE_DPAD_RIGHT))}
         assertEquals(.95f,s.stabilization,.001f)
         click(e,"Done");assertNotNull(named(e,"Prefs"));e.dismissPanel();click(e,"Actions");click(e,"Prefs");click(e,"Pressure and Smoothing")
-        assertEquals(100,(checkNotNull(named(e,"Stabilization")) as android.widget.SeekBar).progress)
+        assertEquals(1f,(checkNotNull(named(e,"Stabilization")) as BrushRange).value,.001f)
         render(e,"feedback-stabilizer-100");e.dismissPanel();a.newCanvas(320,240)
         assertEquals(.95f,checkNotNull(a.session).stabilization,.001f)
         shutdown(controller)
@@ -443,7 +443,7 @@ class StudioTest {
         render(e,"feedback2-raster-portrait",400,820)
         assertEquals(88,e.canvas.top);val history=checkNotNull(named(e,"History and save"));assertTrue(history.top>700)
         RuntimeEnvironment.setQualifiers("w1280dp-h800dp-land-mdpi");controller.configurationChange();render(e,"feedback2-raster-rotated",1280,800);assertEquals(44,e.canvas.top);assertEquals(0,checkNotNull(named(e,"History and save")).top)
-        click(e,"Erase");click(e,"Add");org.robolectric.shadows.ShadowAlertDialog.getLatestAlertDialog().let{dialog->dialog.listView.performItemClick(dialog.listView.getChildAt(0),0,0)};shadowOf(Looper.getMainLooper()).idle();click(e,"Edge hardness");assertNotNull(named(e,"Hardness"));click(e,"Soft");assertEquals(0f,s.eraserHardness,0f)
+        click(e,"Erase");click(e,"Add");click(e,"Brush Studio");shadowOf(Looper.getMainLooper()).idle();click(e,"Edge hardness");assertNotNull(named(e,"Hardness"));click(e,"Soft");assertEquals(0f,s.eraserHardness,0f)
         render(e,"feedback2-eraser");e.dismissPanel()
         val image=Bitmap.createBitmap(30,20,Bitmap.Config.ARGB_8888).apply{eraseColor(0xffef8040.toInt())};var imported=false
         s.import(image){e.startLayerTransform();imported=true};image.recycle();until{imported};assertEquals("Transform",s.tool)
